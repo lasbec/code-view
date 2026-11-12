@@ -1,0 +1,17 @@
+{
+  "name": "typescript-file-inspector",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "inspect": "node src/main.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "minimatch": "11.0.8",
+    "typescript": "5.9.3"
+  }
+}
