@@ -42,8 +42,8 @@ class Counter {value=0;bump(){this.value++;}}
  assert.ok(r.references.some(a=>a.target_id===fn('leaf').id&&a.kind==='argument'));
  const db=new DatabaseSync(path.join(dir,'out.sqlite')); t.after(()=>db.close());
  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
- assert.equal(db.prepare('SELECT call_count FROM call_counts WHERE caller_id=? AND target_id=?').get(fn('caller').id,fn('leaf').id).call_count,3);
- assert.equal(db.prepare('SELECT exported_variables FROM files WHERE id=?').get('a.ts').exported_variables,2);
+ assert.equal(db.prepare('SELECT call_count FROM code_call_counts WHERE caller_id=? AND target_id=?').get(fn('caller').id,fn('leaf').id).call_count,3);
+ assert.equal(db.prepare('SELECT exported_variables FROM code_files WHERE id=?').get('a.ts').exported_variables,2);
 });
 test('line metrics preserve regex/template literals and isolate nested control flow',t=>{
  const {args}=fixture(t,{'a.ts':'// header\n\nexport function f() {\n // comment\n const r = /abc/; // mixed\n const s = `hello\n// literal`;\n const inner = () => { while(true) {} };\n return 1;\n}\n'});
@@ -71,20 +71,20 @@ function refs(){const m=obj.method;return m;}
  assert.equal(a.find(a=>a.symbol_name==='globalCount').scope,'global');
  const method=r.functions.find(f=>f.name==='method');assert.ok(r.references.some(a=>a.target_id===method.id&&a.kind==='assignment'));
 });
-test('incremental cache reuses unchanged files and invalidates transitive dependents',t=>{
+test('every run rebuilds unchanged files and recalculates dependent termination',t=>{
  const {dir,args}=fixture(t,{
   'leaf.ts':'export function leaf(){return 1;}',
   'caller.ts':"import {leaf} from './leaf.js'; export function caller(){return leaf();}",
   'other.ts':'export function other(){return 2;}',
  });
  assert.equal(main(args).files.length,3);
- const unchanged=main(args);assert.equal(unchanged.files.length,0);assert.equal(unchanged.skipped_files,3);
+ const unchanged=main(args);assert.equal(unchanged.files.length,3);assert.equal(unchanged.skipped_files,0);
  writeFileSync(path.join(dir,'leaf.ts'),'export function leaf(){while(true){}}');
- const changed=main(args);assert.equal(changed.files.length,2);assert.equal(changed.skipped_files,1);
+ const changed=main(args);assert.equal(changed.files.length,3);assert.equal(changed.skipped_files,0);
  assert.equal(changed.functions.find(f=>f.name==='caller').termination,'unknown');
  const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
- assert.equal(db.prepare('SELECT COUNT(*) AS n FROM files').get().n,3);
- assert.equal(db.prepare('SELECT COUNT(*) AS n FROM functions').get().n,3);
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM code_files').get().n,3);
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM code_functions').get().n,3);
  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
 });
 test('parameter rebinding and alias snapshots preserve externally visible mutation semantics',t=>{
@@ -100,16 +100,16 @@ export function g(p:{x:number},flag:boolean) {if(flag){p={x:0};}p.x++;}
  assert.equal(r.parameters.find(p=>p.function_id===f.id).mutation_count,1);
  assert.equal(r.parameters.find(p=>p.function_id===g.id).possible_mutation_count,1);
 });
-test('partial file updates retain other results and expose parameter patterns and exported references',t=>{
+test('filtered rebuilds replace previous selections and expose parameter patterns and exported references',t=>{
  const {dir,args}=fixture(t,{
   'a.ts':'export function a({child}:{child:{x:number}}){child.x++;} export {a as again};',
   'b.ts':'export function b(){}',
  });
- main([...args,'--include','a.ts']);main([...args,'--include','b.ts']);
+ main([...args,'--include','b.ts']);main([...args,'--include','a.ts']);
  const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
- assert.equal(db.prepare('SELECT COUNT(*) AS n FROM files').get().n,2);
- assert.equal(db.prepare('SELECT mutation_count FROM parameters').get().mutation_count,1);
- assert.equal(db.prepare("SELECT COUNT(*) AS n FROM function_references WHERE kind='export'").get().n,1);
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM code_files').get().n,1);
+ assert.equal(db.prepare('SELECT mutation_count FROM code_parameters').get().mutation_count,1);
+ assert.equal(db.prepare("SELECT COUNT(*) AS n FROM code_function_references WHERE kind='export'").get().n,1);
 });
 test('recursive project references and extended config are loaded',t=>{
  const {dir,args}=fixture(t,{'a.ts':'export function a(){}'});
@@ -118,12 +118,62 @@ test('recursive project references and extended config are loaded',t=>{
  writeFileSync(path.join(dir,'tsconfig.json'),JSON.stringify({files:[],references:[{path:'./lib.json'}]}));
  const r=main(args);assert.equal(r.files.length,1);assert.equal(r.functions[0].name,'a');
 });
-test('resuming an existing per-file cache recomputes termination even without source changes',t=>{
+test('rebuilding replaces stored results even without source changes',t=>{
  const {dir,args}=fixture(t,{'a.ts':'export function a(){return 1;}'});
  main(args);
  const db=new DatabaseSync(path.join(dir,'out.sqlite'));
- db.exec("UPDATE functions SET termination='unknown', termination_reason=NULL");db.close();
- assert.equal(main(args).skipped_files,1);
+ db.exec("UPDATE code_functions SET termination='unknown', termination_reason=NULL");db.close();
+ assert.equal(main(args).skipped_files,0);
  const reopened=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>reopened.close());
- assert.equal(reopened.prepare('SELECT termination FROM functions').get().termination,'terminates');
+ assert.equal(reopened.prepare('SELECT termination FROM code_functions').get().termination,'terminates');
+});
+
+test('shared databases retain legacy and unrelated objects and accept another project',t=>{
+ const first=fixture(t,{'a.ts':'export function a(){}'});
+ const second=fixture(t,{'b.ts':'export function b(){}'});
+ const output=path.join(first.dir,'out.sqlite');
+ const db=new DatabaseSync(output);
+ db.exec("CREATE TABLE files (value TEXT); INSERT INTO files VALUES ('legacy'); CREATE INDEX legacy_index ON files(value); CREATE VIEW legacy_view AS SELECT value FROM files; CREATE TABLE code_custom (value TEXT); INSERT INTO code_custom VALUES ('custom');");
+ db.close();
+ main(first.args);
+ main(['-p',path.join(second.dir,'tsconfig.json'),'-o',output]);
+ const reopened=new DatabaseSync(output);t.after(()=>reopened.close());
+ assert.equal(reopened.prepare('SELECT value FROM legacy_view').get().value,'legacy');
+ assert.equal(reopened.prepare('SELECT value FROM code_custom').get().value,'custom');
+ assert.equal(reopened.prepare('SELECT name FROM code_functions').get().name,'b');
+ assert.equal(reopened.prepare("SELECT value FROM code_metadata WHERE key='tsconfig'").get().value,path.join(second.dir,'tsconfig.json'));
+ const objects=reopened.prepare("SELECT type,name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name NOT IN ('files','legacy_index','legacy_view','code_custom')").all();
+ assert.equal(objects.filter(o=>o.type==='table').length,10);
+ assert.equal(objects.filter(o=>o.type==='view').length,3);
+ assert.equal(objects.filter(o=>o.type==='index').length,4);
+ assert.ok(objects.every(o=>o.name.startsWith('code_')));
+ assert.equal(reopened.prepare('SELECT function_count FROM code_file_function_counts').get().function_count,1);
+ assert.deepEqual(reopened.prepare('SELECT * FROM code_access_counts').all(),[]);
+});
+test('failed rebuild rolls back schema and rows without cascading into foreign tables',t=>{
+ const {dir,args}=fixture(t,{'a.ts':'export function a(){}','b.ts':'export function b(){}'});
+ main(args);
+ const output=path.join(dir,'out.sqlite');
+ const db=new DatabaseSync(output);
+ db.exec("PRAGMA foreign_keys=ON; CREATE TABLE bookmarks (file_id TEXT REFERENCES code_files(id) ON DELETE CASCADE); INSERT INTO bookmarks VALUES ('a.ts');");
+ db.close();
+ // Replacing identical IDs must preserve external references even with ON DELETE CASCADE.
+ main(args);
+ const current=readFileSync(output);
+ assert.throws(()=>main([...args,'--include','b.ts']),/foreign key constraints/);
+ assert.deepEqual(readFileSync(output),current);
+ const reopened=new DatabaseSync(output);t.after(()=>reopened.close());
+ assert.equal(reopened.prepare('SELECT file_id FROM bookmarks').get().file_id,'a.ts');
+ assert.equal(reopened.prepare('SELECT COUNT(*) AS n FROM code_files').get().n,2);
+ assert.deepEqual(reopened.prepare('PRAGMA foreign_key_check').all(),[]);
+});
+test('schema creation errors roll back dropped inspector objects',t=>{
+ const {dir,args}=fixture(t,{'a.ts':'export function a(){}'});
+ main(args);
+ const output=path.join(dir,'out.sqlite');
+ const db=new DatabaseSync(output);
+ db.exec('DROP VIEW code_access_counts; CREATE TABLE code_access_counts (value TEXT);');db.close();
+ const before=readFileSync(output);
+ assert.throws(()=>main(args));
+ assert.deepEqual(readFileSync(output),before);
 });

@@ -13,44 +13,44 @@ npm test
 
 `--tsconfig` und `--output` sind erforderlich. Globs sind relativ zum Verzeichnis der Haupt-tsconfig, nicht zum Arbeitsverzeichnis. Includes schränken die tsconfig-Dateimenge ein; Excludes ziehen Dateien davon ab. Globs in der Shell quoten. Tests werden standardmäßig analysiert, sofern die tsconfig sie enthält. Deklarationsdateien und `node_modules` werden nicht als Ergebnisdateien erfasst. Build-Dateien sollten in der tsconfig ausgeschlossen sein. Projektverweise werden rekursiv mit ihren jeweiligen Compileroptionen geladen. JavaScript wird bei `allowJs` berücksichtigt.
 
-## Inkrementelle Ausgabe
+## SQLite-Ausgabe
 
-Eine Datenbank gehört zu genau einer Haupt-tsconfig. Neue Dateien werden ergänzt; bei Änderungen werden die bisherigen Ergebnisse dieser Datei ersetzt. Jede Datei wird in einer eigenen SQLite-Transaktion geschrieben. Unveränderte Dateien behalten ihre Ergebnisse und IDs. Quellpositionen sind Teil der IDs; Änderungen können IDs verschieben.
+Jeder Lauf analysiert alle aktuell ausgewählten Dateien und baut die bekannten Skripttabellen, Views und explizit benannten Indizes mit dem Präfix `code_` vollständig neu auf. Die SQLite-Datei bleibt bestehen. Fremde Objekte, unbekannte `code_`-Tabellen und alte Tabellen ohne Präfix bleiben erhalten. Bestehende Datenbanken dürfen auch Ergebnisse einer anderen Haupt-tsconfig enthalten; deren bekannte `code_`-Objekte werden ersetzt.
 
-Die Cache-Prüfung berücksichtigt Inhalte, transitiv importierte Dateien, globale Deklarationen, Compileroptionen, Konfigurationen, TypeScript-Version und Implementierung des Inspectors. Geänderte Abhängigkeiten invalidieren betroffene Dateien. Änderungen an globalen Deklarationen können alle Dateien invalidieren. Die Compilerprogramme und der Symbolindex werden auch bei einem Cache-Treffer geladen; gespart wird die detaillierte Dateianalyse und deren Speicherung. Es handelt sich nicht um einen Watch-Prozess.
+CLI-Filter bestimmen den gesamten neuen Ergebnisbestand. Ein Lauf mit `--include 'src/a.ts'` enthält anschließend ausschließlich die Ergebnisse dieser Auswahl. Ergebnisse zuvor ausgewählter Dateien werden nicht übernommen. Ohne Filter wird die gesamte aktuelle tsconfig-Dateimenge analysiert. Quellpositionen sind Teil der IDs; Änderungen können IDs verschieben.
 
-CLI-Filter wählen aus, welche Dateien aktualisiert werden. Bereits gespeicherte Ergebnisse anderer Dateien bleiben erhalten und können einen älteren Stand darstellen. Physisch gelöschte Dateien werden entfernt. Ohne Filter wird die gesamte aktuelle tsconfig-Dateimenge aktualisiert. Für einen komplett neuen Snapshot einen neuen Ausgabepfad verwenden oder die alte Datenbank vorher entfernen. Das Tool überschreibt keine fremde SQLite-Datenbank.
+Löschen, Schemaaufbau und Speicherung erfolgen in einer gemeinsamen SQLite-Transaktion. Erst ein erfolgreicher Lauf übernimmt die neuen Ergebnisse. Bei einem Fehler oder Abbruch bleiben die bisherigen Ergebnisse erhalten. Während des Neuaufbaus ist die Datenbank für andere Schreiber gesperrt. Fremdschlüssel werden vor dem Commit für die gesamte Datenbank geprüft; verletzte Referenzen verhindern die Übernahme. Löschkaskaden in fremden Tabellen werden beim Schemawechsel unterbunden.
 
-Bei einem Abbruch bleiben bereits abgeschlossene Dateitransaktionen erhalten; der nächste Lauf setzt anhand der Fingerprints fort. Die Terminierungsbewertung des gespeicherten Aufrufgraphen wird am Ende jedes erfolgreichen Laufs neu berechnet. Syntax- oder Konfigurationsfehler brechen vor dem Schreiben ab. Semantische TypeScript-Diagnosen werden gespeichert: fehlende Abhängigkeiten können die Symbolauflösung verschlechtern.
+Syntax- oder Konfigurationsfehler brechen vor dem Schreiben ab. Semantische TypeScript-Diagnosen werden gespeichert: fehlende Abhängigkeiten können die Symbolauflösung verschlechtern. Es handelt sich nicht um einen Watch-Prozess. Spaltenbeschreibungen werden nicht gespeichert.
 
 ## Datenmodell
 
-- `files`: Pfad, Zeilenmetriken, Importanweisungen, importierte Bindungen, dynamische Imports, Re-Exports und exportierte Modulvariablen.
-- `functions`: Funktionsdeklarationen, Function Expressions, Arrow Functions, Methoden, Konstruktoren, Getter und Setter mit Implementierung; Name, Art, Position, Elternfunktion, Metriken und Terminierung. Overload-Signaturen zählen nicht zusätzlich.
-- `parameters`: Reihenfolge, Name bzw. Binding-Pattern, Typ, optional/rest und definite/mögliche Mutationen.
-- `accesses`: einzelne Zugriffe mit Symbolherkunft, Position, Ausdruck, Scope, Lese-/Schreib-/Mutationsflags und Effektgewissheit.
-- `calls`: einzelne statische Aufrufstellen, einschließlich Konstruktoraufrufen, mit Caller und auflösbarem Ziel. Aufrufe auf Modulebene haben keinen Caller.
-- `function_references`: Funktionsverwendungen nach `direct_call`, `argument`, `assignment`, `return`, `export`, `other`. Direkte Aufrufe sind zusätzlich als Referenz mit diesem expliziten Typ sichtbar; für Verwendungen ohne Aufruf nach `kind <> 'direct_call'` filtern. Importdeklarationen allein zählen nicht als Verwendung.
-- `shadowing`: ein Ereignis pro verdeckender Deklaration, einschließlich Parameter, mit verdecktem Symbol. Reine Typnamen zählen nicht.
-- `diagnostics`, `metadata`, `file_state`: Compilerdiagnosen, Analysekonfiguration und Cachezustand.
+- `code_files`: Pfad, Zeilenmetriken, Importanweisungen, importierte Bindungen, dynamische Imports, Re-Exports und exportierte Modulvariablen.
+- `code_functions`: Funktionsdeklarationen, Function Expressions, Arrow Functions, Methoden, Konstruktoren, Getter und Setter mit Implementierung; Name, Art, Position, Elternfunktion, Metriken und Terminierung. Overload-Signaturen zählen nicht zusätzlich.
+- `code_parameters`: Reihenfolge, Name bzw. Binding-Pattern, Typ, optional/rest und definite/mögliche Mutationen.
+- `code_accesses`: einzelne Zugriffe mit Symbolherkunft, Position, Ausdruck, Scope, Lese-/Schreib-/Mutationsflags und Effektgewissheit.
+- `code_calls`: einzelne statische Aufrufstellen, einschließlich Konstruktoraufrufen, mit Caller und auflösbarem Ziel. Aufrufe auf Modulebene haben keinen Caller.
+- `code_function_references`: Funktionsverwendungen nach `direct_call`, `argument`, `assignment`, `return`, `export`, `other`. Direkte Aufrufe sind zusätzlich als Referenz mit diesem expliziten Typ sichtbar; für Verwendungen ohne Aufruf nach `kind <> 'direct_call'` filtern. Importdeklarationen allein zählen nicht als Verwendung.
+- `code_shadowing`: ein Ereignis pro verdeckender Deklaration, einschließlich Parameter, mit verdecktem Symbol. Reine Typnamen zählen nicht.
+- `code_diagnostics`, `code_metadata`, `code_file_state`: Compilerdiagnosen, Analysekonfiguration und neu berechnete Datei-Fingerprints.
 
-Views: `call_counts`, `access_counts`, `file_function_counts`. Positionen sind 1-basiert, Pfade relativ zur Haupt-tsconfig. Ziel-IDs von Aufrufen und Referenzen sind bewusst keine Fremdschlüssel: Dateifilter und einzelne Dateitransaktionen können zeitweise Ziele außerhalb des gespeicherten Bestands ergeben. `NULL` bedeutet, dass kein eindeutiges analysiertes Ziel aufgelöst wurde. `resolution` unterscheidet `resolved`, `ambiguous` und `unknown`.
+Views: `code_call_counts`, `code_access_counts`, `code_file_function_counts`. Positionen sind 1-basiert, Pfade relativ zur Haupt-tsconfig. Ziel-IDs von Aufrufen und Referenzen sind bewusst keine Fremdschlüssel: Dateifilter können Ziele außerhalb des gespeicherten Bestands ergeben. `NULL` bedeutet, dass kein eindeutiges analysiertes Ziel aufgelöst wurde. `resolution` unterscheidet `resolved`, `ambiguous` und `unknown`.
 
 ```sql
 -- A ruft B an wie vielen Quellstellen auf?
 SELECT a.name AS caller, b.name AS callee, SUM(c.call_count) AS sites
-FROM call_counts c
-JOIN functions a ON a.id = c.caller_id
-JOIN functions b ON b.id = c.target_id
+FROM code_call_counts c
+JOIN code_functions a ON a.id = c.caller_id
+JOIN code_functions b ON b.id = c.target_id
 GROUP BY a.id, b.id;
 
 -- Externe Zustandszugriffe nach Scope und Gewissheit
 SELECT f.name, a.scope, a.effect, a.reads, a.writes, a.mutations
-FROM access_counts a JOIN functions f ON f.id = a.function_id;
+FROM code_access_counts a JOIN code_functions f ON f.id = a.function_id;
 
 -- Funktionen, die als Argument weitergegeben werden
 SELECT f.name, r.file_id, r.line, r.column
-FROM function_references r JOIN functions f ON f.id = r.target_id
+FROM code_function_references r JOIN code_functions f ON f.id = r.target_id
 WHERE r.kind = 'argument';
 ```
 
