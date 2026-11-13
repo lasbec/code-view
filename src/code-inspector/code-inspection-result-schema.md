@@ -1,6 +1,6 @@
 # Code inspection result schema
 
-SQLite, schema version `3`. See [TypeScript usage](typescript/usage.md).
+SQLite, schema version `4`. See [TypeScript usage](typescript/usage.md).
 
 ## Conventions
 
@@ -21,6 +21,7 @@ One row per selected source file.
 | Field | Type | Content |
 | --- | --- | --- |
 | `id` | TEXT PK | Relative file path. |
+| `size_bytes` | INTEGER | File size in bytes on disk. |
 | `total_lines` | INTEGER | All lines; a trailing newline adds no extra line. |
 | `blank_lines` | INTEGER | Lines without code or comment text. |
 | `comment_lines` | INTEGER | Comment-only lines. |

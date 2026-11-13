@@ -1,5 +1,6 @@
 import ts from 'typescript';
 import path from 'node:path';
+import { statSync } from 'node:fs';
 import { isFunction, walkOwn, lineMetrics, functionMetrics } from './metrics.mjs';
 import { slash } from './project.mjs';
 import { solveTermination } from './termination.mjs';
@@ -71,7 +72,7 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
       if (s.flags & ts.SymbolFlags.Alias) s = checker.getAliasedSymbol(s);
       return (s.declarations ?? []).filter(d => (ts.isVariableDeclaration(d) || ts.isBindingElement(d)) && d.getSourceFile() === sf && !nearestFunction(d)).map(nodeId);
     }));
-    result.files.push({ id: entry.path, ...lineMetrics(sf), import_statements: imports, imported_bindings: bindings, dynamic_imports: dynamic, reexports, exported_variables: exportedVars.size });
+    result.files.push({ id: entry.path, size_bytes: statSync(sf.fileName).size, ...lineMetrics(sf), import_statements: imports, imported_bindings: bindings, dynamic_imports: dynamic, reexports, exported_variables: exportedVars.size });
   }
   for (const { sf, checker, path: filePath } of project.files) {
     if (!changedPaths.has(filePath)) continue;
