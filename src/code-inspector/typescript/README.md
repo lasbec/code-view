@@ -1,9 +1,9 @@
-# TypeScript File Inspector
+# TypeScript Code Inspector
 
 Statische Analyse eines TypeScript-Projekts mit SQLite-Ausgabe. Benötigt Node.js ab 22.13 (mit `node:sqlite`). Es wird kein untersuchter Code ausgeführt. Die TypeScript Compiler API ist auf Version 5.9.3 festgelegt.
 
 ```bash
-cd file-inspector/typescript
+cd src/code-inspector/typescript
 npm ci
 npm run inspect -- --tsconfig /pfad/repo/tsconfig.json --output /pfad/analyse.sqlite
 npm run inspect -- -p /pfad/repo/tsconfig.json -o /pfad/analyse.sqlite \
