@@ -67,7 +67,7 @@ export class Jobs {
       check(rel !== '..' && !rel.startsWith(`..${sep}`), 'tsconfig resolves outside the repository.');
       const branch = await this.command('git', ['-C', repository, 'symbolic-ref', '--quiet', '--short', 'HEAD'], true);
       this.current.branch = branch;
-      const commits = config.commits ?? Number(await this.command('git', ['-C', repository, 'rev-list', '--count', branch], true));
+      const commits = config.commits ?? Number(await this.command('git', ['-C', repository, 'rev-list', '--count', branch, '--'], true));
       this.current.phase = 'Inspecting TypeScript';
       this.current.activeInspector = 'code';
       this.current.progress.code.status = 'preparing';

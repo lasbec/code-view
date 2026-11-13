@@ -20,10 +20,11 @@ test('serialized storage survives restart without losing concurrent changes', as
   await Promise.all([store.update(s => { s.selection.inspection = 'first'; }), store.update(s => { s.selection.preset = 'second'; })]);
   assert.deepEqual((await openStore(dir)).get().selection, { inspection: 'first', preset: 'second' });
 });
-test('HTTP lifecycle runs real inspectors, renders results, and retains results on failure and cancellation', { timeout: 60000 }, async t => {
+test('HTTP lifecycle handles a branch matching a path, renders results, and retains results on failure and cancellation', { timeout: 60000 }, async t => {
   const dir = await temporary(t), repo = join(dir, 'repository'); await mkdir(repo);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
-  git('init', '-b', 'main'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.test');
+  git('init', '-b', 'master'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.test');
+  await writeFile(join(repo, 'master'), 'Branch and path share a name.\n');
   await writeFile(join(repo, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', noLib: true }, include: ['*.ts'] }));
   await writeFile(join(repo, 'example.ts'), 'export function example(x: number) { return x > 2 ? x : 0; }\n');
   await writeFile(join(repo, 'excluded.ts'), 'export const excluded = 1;');
@@ -38,7 +39,7 @@ test('HTTP lifecycle runs real inspectors, renders results, and retains results 
   };
   assert.equal((await call('state')).value.inspections.length, 0);
   assert.equal((await call('selection', 'POST', {}, { Origin: 'https://evil.example' })).status, 400);
-  const config = { name: 'Example', repository: repo, tsconfig: 'tsconfig.json', commits: 200, exclude: ['excluded.ts'] };
+  const config = { name: 'Example', repository: repo, tsconfig: 'tsconfig.json', exclude: ['excluded.ts'] };
   const { value: inspection } = await call('inspections', 'POST', config);
   assert.ok(inspection.id);
   assert.equal((await call('run', 'POST', { id: inspection.id })).status, 202);
