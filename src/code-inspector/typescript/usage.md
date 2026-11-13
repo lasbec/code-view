@@ -1,0 +1,50 @@
+# Using the TypeScript code inspector
+
+See the root [README](../../../README.md) for requirements and installation.
+
+## Parameters
+
+| Parameter | Required | Meaning |
+| --- | --- | --- |
+| `--tsconfig`, `-p` | yes | Path to the main tsconfig. |
+| `--output`, `-o` | yes | Path to a new or existing SQLite file. |
+| `--include` | no | Repeatable glob restricting the tsconfig file set. |
+| `--exclude` | no | Repeatable glob removing files from the selection. |
+| `--help`, `-h` | no | Show help and exit. |
+
+Relative argument paths use the working directory.
+Globs use the main tsconfig directory as their base; quote them in the shell.
+Without filters, the entire tsconfig file set is selected, including tests.
+Project references are loaded recursively; JavaScript is included when `allowJs` is enabled.
+Declaration files and `node_modules` are excluded from result files.
+
+## Example
+
+From the repository root, after running `npm ci` in the script directory:
+
+```bash
+node src/code-inspector/typescript/src/main.mjs \
+  --tsconfig /path/project/tsconfig.json \
+  --output /path/results/analysis.sqlite \
+  --include 'src/**/*.ts' --include 'src/**/*.tsx' \
+  --exclude '**/*.test.ts'
+```
+
+Alternatively, in the script directory: `npm run inspect -- --tsconfig ... --output ...`.
+
+## Result
+
+The SQLite file contains file metrics, functions, parameters, accesses, calls and compiler diagnostics.
+See the [result schema](../code-inspection-result-schema.md) for tables, fields, views and counting rules.
+The console reports the numbers of analyzed files and functions and the absolute output path.
+Semantic TypeScript diagnostics are stored and summarized on stderr.
+Missing dependencies may reduce resolution accuracy; analyzed code is never executed.
+
+Each run analyzes the entire selection and replaces all known `code_` tables, views and indexes.
+Filters define the complete new result set; previous results outside the selection are removed.
+Other database objects are preserved. Both inspectors can use the same SQLite file.
+The rebuild uses one transaction; errors or interruption preserve previous results.
+Syntax and configuration errors abort before writing.
+Foreign-key violations anywhere in the database prevent the commit.
+Other writers are blocked during writing; a failed first run may leave an empty file.
+Exit code `0` means success or help; `1` means an error. Runs are neither continuous nor incremental.
