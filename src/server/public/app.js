@@ -137,9 +137,12 @@ async function drawMap(c, p, number) {
     const result = await api(`treemap?inspection=${encodeURIComponent(c.id)}&preset=${encodeURIComponent(p.id)}&showFunctions=${showFunctions}`);
     if (number !== requestNumber || route() !== 'treemap') return;
     metrics = result.metrics;
-    const frame = document.createElement('iframe'); frame.title = 'Code treemap'; frame.setAttribute('sandbox', 'allow-scripts');
+    const frame = document.createElement('iframe'); frame.title = 'Code treemap'; frame.setAttribute('sandbox', 'allow-scripts allow-forms');
     frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style id="theme-style">${treemapThemeStyles()}</style><style>html,body{height:100%;box-sizing:border-box}body{margin:0;padding:6px;font-family:system-ui;overflow:hidden;background:var(--cv-bg);color:var(--cv-text)}.code-view-treemap{height:100%;min-height:0;--treemap-height:auto}</style><script>(${receiveTreemapTheme.toString()})();<\/script></head><body>${result.treeMapHtml}</body></html>`;
-    frame.addEventListener('load', () => frame.contentWindow.postMessage({ type: 'code-view-theme', styles: treemapThemeStyles() }, '*'));
+    frame.addEventListener('load', () => {
+      frame.contentWindow.postMessage({ type: 'code-view-theme', styles: treemapThemeStyles() }, '*');
+      frame.contentWindow.postMessage({ type: 'code-view-set-path', path: new URLSearchParams(location.search).get('treemapPath') ?? '' }, '*');
+    });
     document.querySelector('#map').replaceChildren(frame);
     document.querySelector('#warning-content').innerHTML = result.treeMapWarningsHtml;
   } catch (error) {
@@ -218,6 +221,12 @@ setInterval(async () => {
 
 window.addEventListener('message', async event => {
   const frame = document.querySelector('#map iframe');
+  if (frame && event.source === frame.contentWindow && event.data?.type === 'code-view-path' && typeof event.data.path === 'string') {
+    const url = new URL(location.href);
+    if (event.data.path) url.searchParams.set('treemapPath', event.data.path); else url.searchParams.delete('treemapPath');
+    history.replaceState(history.state, '', url);
+    return;
+  }
   if (frame && event.source === frame.contentWindow && event.data?.type === 'code-view-heat') {
     const p = selectedPreset(), heat = event.data.heat, previousKey = currentTreeKey();
     try {

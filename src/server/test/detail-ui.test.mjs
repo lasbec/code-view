@@ -11,9 +11,11 @@ test('detail UI partitions lines, escapes source, links functions and reveals mu
   dom.window.HTMLElement.prototype.scrollIntoView = function() {};
   dom.window.eval(bundle.outputFiles[0].text);
   const fn = { id: 'a.ts:0', file_id: 'a.ts', name: 'example', line: 1, cyclomatic_complexity: 2, max_nesting: 1, heat: 3 };
-  const data = { kind: 'file', entity: { id: 'a.ts', total_lines: 4, blank_lines: 1, comment_lines: 1, lines_with_comments: 2 }, file: { id: 'a.ts' }, node: { heat: 3, scores: [], topAuthors: [] }, functions: [fn], names: [fn], fileIds: ['a.ts'], preset: 'Current preset', warnings: ['Uncommitted changes'], incoming: [], outgoing: [], mutations: [{ function_id: fn.id, symbol_name: 'options', expression: 'options.x', effect: 'possible', scope: 'parameter', line: 2 }], accesses: [], imports: [], importers: [], exports: [], diagnostics: [], history: [], changeCount: 0, source: 'const a = "<script>";\noptions.x++;\n// comment\n', sourcePath: '/tmp/a.ts' };
+  const data = { kind: 'file', entity: { id: 'a.ts', total_lines: 4, blank_lines: 1, comment_lines: 1, lines_with_comments: 2 }, file: { id: 'a.ts' }, node: { heat: 3, scores: [], topAuthors: [], authorship: { basis: "commits", authors: [{ name: "Alice", share: .75 }, { name: "Bob", share: .25 }] } }, functions: [fn], names: [fn], fileIds: ['a.ts'], preset: 'Current preset', warnings: ['Uncommitted changes'], incoming: [], outgoing: [], mutations: [{ function_id: fn.id, symbol_name: 'options', expression: 'options.x', effect: 'possible', scope: 'parameter', line: 2 }], accesses: [], imports: [], importers: [], exports: [], diagnostics: [], history: [], changeCount: 0, source: 'const a = "<script>";\noptions.x++;\n// comment\n', sourcePath: '/tmp/a.ts' };
   await dom.window.Inspection.showDetailRoute(async () => data);
   const doc = dom.window.document;
+  assert.match(doc.querySelector('.inspect-authorship').textContent,/Alice 75.0%.*Bob 25.0%/s);
+  assert.equal(doc.querySelector('.inspect-authorship').closest('details'),null);
   assert.equal(doc.querySelectorAll('.line-composition span').length, 4);
   assert.deepEqual([...doc.querySelectorAll('.line-composition span')].map(s => s.style.width), ['25%', '25%', '25%', '25%']);
   assert.equal(doc.querySelector('.source-code script'), null);
@@ -23,5 +25,7 @@ test('detail UI partitions lines, escapes source, links functions and reveals mu
   assert.match(mutation.textContent, /options.*possible/s);
   mutation.querySelector('[data-source-line]').click();
   assert.equal(doc.querySelector('.source-code .selected').dataset.line, '2');
+  await dom.window.Inspection.showDetailRoute(async () => ({ ...data, kind: 'function', entity: fn, parameters: [] }));
+  assert.match(doc.querySelector('.inspect-authorship').textContent,/containing file.*75.0%/s);
   dom.window.Inspection.closeDetail(); assert.equal(doc.querySelector('#detail-view'), null);
 });

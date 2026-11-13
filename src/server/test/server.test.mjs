@@ -84,6 +84,9 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal(detail.status, 200, JSON.stringify(detail.value));
   assert.equal(detail.value.warnings.length, 0);
   assert.equal(detail.value.node.heat, JSON.parse(rendered.value.treeMapHtml.match(/\"heat\":([0-9.]+)/)[1]));
+  assert.equal(detail.value.node.authorship.authors[0].share,1);
+  const functionDetail = await call(`detail?inspection=${inspection.id}&preset=${state.presets[0].id}&kind=function&id=${encodeURIComponent(detail.value.functions[0].id)}`);
+  assert.equal(functionDetail.value.node.authorship.authors[0].share,1);
   assert.match(detail.value.source, /export function example/);
   assert.deepEqual(detail.value.exports.map(e => e.name), ['example']);
   const listing = await call(`list?inspection=${inspection.id}&preset=${state.presets[0].id}`);

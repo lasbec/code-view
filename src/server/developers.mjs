@@ -35,7 +35,7 @@ export function developerData(path, files, preset, identities = [], options = {}
   try {
     const config = preset.config, aliases = new Map(), people = new Map(), fileAuthors = new Map();
     for (const identity of identities) for (const email of [identity.email,...identity.aliases ?? []]) aliases.set(normalizeAuthorEmail(email),identity);
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='git_commits'").get()) return { developers: [], mainAuthors: {}, available: false };
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='git_commits'").get()) return { developers: [], mainAuthors: {}, authorship: {}, available: false };
     const columns = db.prepare('PRAGMA table_info(git_file_changes)').all();
     const available = columns.some(c => c.name === 'lines_changed');
     const stats = available ? 'f.lines_created AS created, f.lines_removed AS deleted, f.lines_changed AS changed' : 'NULL AS created,NULL AS deleted,NULL AS changed';
@@ -58,7 +58,7 @@ export function developerData(path, files, preset, identities = [], options = {}
     }
     let max = 0;
     for (const file of files) if (Number.isFinite(file.score)) max = Math.max(max,file.score);
-    const mainAuthors = {};
+    const mainAuthors = {}, authorship = {};
     for (const [path, authors] of fileAuthors) {
       const values = [...authors.values()], fallback = config.basis === 'churn' && (values.some(a => a.missing) || !values.some(a => a.amount > 0));
       for (const a of values) a.value = config.basis === 'commits' || fallback ? a.commits.size : a.amount;
@@ -66,6 +66,8 @@ export function developerData(path, files, preset, identities = [], options = {}
       const winner = values[0], person = people.get(winner.id);
       mainAuthors[path] = { id: winner.id, name: person.name, color: person.color };
       const total = values.reduce((s,a) => s+a.value,0), file = byPath.get(path);
+      authorship[path] = { basis: config.basis === 'commits' || fallback ? 'commits' : 'churn', fallback,
+        authors: values.map(a => ({ id: a.id, name: people.get(a.id).name, color: people.get(a.id).color, share: a.value / total })) };
       let score = file.score;
       if (config.normalization === 'lines') score = file.effective_lines > 0 && score !== null ? score/file.effective_lines : null;
       if (config.normalization === 'scale' && score !== null) score = max > 0 ? score/max*100 : 0;
@@ -83,6 +85,6 @@ export function developerData(path, files, preset, identities = [], options = {}
       return { ...person, commits, totals, perCommit, score: aggregateDeveloper(person.files,config) };
     });
     developers.sort((a,b) => (b.score ?? -Infinity)-(a.score ?? -Infinity) || a.name.localeCompare(b.name));
-    return { developers, mainAuthors, available };
+    return { developers, mainAuthors, authorship, available };
   } finally { db.close(); }
 }

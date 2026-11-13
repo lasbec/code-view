@@ -29,6 +29,8 @@ test('attribution merges aliases, counts unique commits, keeps raw activity sepa
   const alice=result.developers.find(p=>p.id==='alice@example.com');
   assert.equal(alice.name,'Canonical Alice');assert.equal(alice.commits.length,1);assert.equal(alice.totals.created,5);assert.equal(alice.totals.changed,1);
   assert.equal(alice.files[0].weight,2/3);assert.equal(result.mainAuthors['a.ts'].id,alice.id);
+  assert.equal(result.authorship['a.ts'].authors[0].share,2/3);
+  assert.equal(result.authorship['a.ts'].basis,'churn');
   const winner=developerData(path,files,{...preset,config:{...preset.config,attribution:'winner'}},identities);
   assert.equal(winner.developers.find(p=>p.id==='bob@example.com').score,null);
   const normalized=developerData(path,files,{...preset,config:{...preset.config,normalization:'lines'}},identities);

@@ -118,7 +118,7 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         check(['file', 'function'].includes(kind), 'Invalid item kind.');
         const options = { ...p.options, showFunctions: url.searchParams.get('showFunctions') === 'true', authorIdentities: c.authorIdentities ?? [] };
         if (url.searchParams.get('listContext') === 'true') Object.assign(options, { include: [], exclude: [], showFunctions: true, includeZeroArea: true });
-        const result = await render(jobs.path(c.id), { ...p, options }, true);
+        const result = await render(jobs.path(c.id), { ...p, developerPreset: state.developerPresets.find(d => d.id === state.selection.developerPreset) ?? state.developerPresets[0] ?? defaultDeveloperPreset(), options }, true);
         check(result.model?.ok, result.error || 'Unable to calculate scores.');
         return send(await inspectDetail(jobs.path(c.id), { ...c, preset: p }, url.searchParams.get('id'), kind, result.model, result.expanded));
       }

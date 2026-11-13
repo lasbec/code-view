@@ -209,4 +209,11 @@ need a rerun for the new categories. See [algorithm research](../../docs/researc
 Treemap's Color by selector switches between Score and Main author. Main authors
 use the selected developer preset's basis, weights and merge policy. Function
 subtiles inherit their file author's color; unknown authors are gray. Colors are
-stable for a canonical identity, and the categorical legend lists authors.
+assigned in canonical identity order, and the categorical legend lists authors.
+
+Treemap author legend buttons toggle individual authors to gray without changing
+rectangle sizes. The author palette uses distinct saturated colors and adapts
+label contrast. File and function details show proportional authorship from the
+selected developer preset (independent of winner attribution); function shares
+refer to the containing file. The URL parameter `treemapPath` preserves zoom
+across settings changes and reloads, falling back to the closest visible ancestor.

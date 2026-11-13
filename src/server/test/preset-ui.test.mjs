@@ -80,6 +80,11 @@ test('treemap heat messages save only heat in the selected preset, retain the if
  for(let i=0;i<3;i++)await new Promise(resolve=>setImmediate(resolve));
  const frame=dom.window.document.querySelector('#map iframe');assert.ok(frame);
  frame.contentWindow.postMessage=message=>replies.push(message);
+ dom.window.dispatchEvent(new dom.window.MessageEvent('message',{source:frame.contentWindow,data:{type:'code-view-path',path:'src/lib'}}));
+ assert.equal(new URLSearchParams(dom.window.location.search).get('treemapPath'),'src/lib');
+ frame.dispatchEvent(new dom.window.Event('load'));
+ assert.ok(replies.some(r=>r.type==='code-view-set-path'&&r.path==='src/lib'));
+ assert.equal(dom.window.document.querySelector('#map iframe'),frame);
  const heat={min:0,yellowFrom:20,redFrom:50,max:100};
  const send=source=>dom.window.dispatchEvent(new dom.window.MessageEvent('message',{source,data:{type:'code-view-heat',heat}}));
  send(dom.window);assert.equal(saved,undefined);
@@ -94,4 +99,10 @@ test('treemap heat messages save only heat in the selected preset, retain the if
  dom.window.location.hash='#presets';
  await new Promise(resolve=>dom.window.setTimeout(resolve,0));
  assert.equal(dom.window.document.querySelector('[name="heat-yellowFrom"]').value,'20');
+});
+
+test('treemap sandbox permits the heat form to submit', async()=>{
+  const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');
+  const sandbox=source.match(/setAttribute\('sandbox', '([^']+)'\)/)[1].split(' ');
+  assert.ok(sandbox.includes('allow-forms'));
 });

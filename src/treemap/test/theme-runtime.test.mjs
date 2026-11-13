@@ -5,7 +5,7 @@ import { mountTreeMap } from '../src/runtime.mjs';
 import { colorFor } from '../src/data.mjs';
 
 function mount(t, legend, themed = true, extra = {}) {
-  const dom = new JSDOM('<div id="map"></div>', { runScripts: 'outside-only' });
+  const dom = new JSDOM('<div id="map"></div>', { runScripts: 'outside-only', url: 'http://localhost/' });
   t.after(() => dom.window.close());
   const host = dom.window.document.querySelector('#map');
   if (themed) host.style.setProperty('--cv-heat-green', '#a3be8c');
@@ -102,5 +102,21 @@ test('main author mode colors file and function tiles, renders categorical legen
   select.value='author';select.dispatchEvent(new dom.window.Event('change'));
   assert.match(root.querySelector('.legend').textContent,/Alice/);assert.equal(root.querySelector('.heat-controls').hidden,true);
   assert.equal(root.querySelector('.tile:not(.file-frame)').style.background,'rgb(170, 187, 204)');
+  const toggle=root.querySelector('.legend button[data-author="alice"]');
+  assert.equal(toggle.getAttribute('aria-pressed'),'true'); toggle.click();
+  assert.equal(root.querySelector('.legend button[data-author="alice"]').getAttribute('aria-pressed'),'false');
+  assert.equal(root.querySelector('.tile:not(.file-frame)').style.background,'rgb(174, 180, 188)');
+  assert.equal(root.querySelector('.file-frame').style.borderTopColor,'rgb(174, 180, 188)');
   select.value='score';select.dispatchEvent(new dom.window.Event('change'));assert.equal(root.querySelector('.heat-controls').hidden,false);
+});
+
+test('zoom path restores after remount and falls back to an available ancestor',t=>{
+  const tree={name:'/',path:'',children:[{name:'src',path:'src',area:10,children:[{name:'lib',path:'src/lib',area:10,children:[{name:'a.ts',path:'src/lib/a.ts',area:10,heat:0}]}]}]};
+  const {root,dom}=mount(t,{min:0,yellowFrom:30,redFrom:70,max:100},false,{tree});
+  const restore=path=>dom.window.dispatchEvent(new dom.window.MessageEvent('message',{source:dom.window.parent,data:{type:'code-view-set-path',path}}));
+  restore('src/lib');assert.equal(root.querySelector('nav').textContent,'/srclib');
+  assert.equal(new URLSearchParams(dom.window.location.search).get('treemapPath'),'src/lib');
+  restore('src/missing');assert.equal(root.querySelector('nav').textContent,'/src');
+  root.querySelector('nav button').click();assert.equal(root.querySelector('nav').textContent,'/');
+  assert.equal(new URLSearchParams(dom.window.location.search).has('treemapPath'),false);
 });

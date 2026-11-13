@@ -16,6 +16,9 @@ export function mountTreeMap(host, model) {
   const scale = model.legend;
   let scaleChanged = false;
   let authorMode = false;
+  const disabledAuthors = new Set();
+  const neutralAuthorColor = '#aeb4bc';
+  const authorId = node => node.mainAuthor?.id ?? '__unknown__';
   const percent = value => scale.max === scale.min ? 0 : 100 * (value - scale.min) / (scale.max - scale.min);
   // CSS variables keep the mounted map in sync with theme changes without rebuilding it.
   // Standalone snippets retain the colors calculated by the data API.
@@ -27,7 +30,7 @@ export function mountTreeMap(host, model) {
     [scale.max, 'var(--cv-heat-violet,rgb(135,55,190))'],
   ];
   function heatColor(node) {
-    if (authorMode) return node.mainAuthor?.color ?? '#c9d0d8';
+    if (authorMode) return disabledAuthors.has(authorId(node)) ? neutralAuthorColor : node.mainAuthor?.color ?? neutralAuthorColor;
     if (!themedHeat && !scaleChanged) return node.color ?? '#c9d0d8';
     if (node.heat == null) return 'var(--cv-heat-neutral,#c9d0d8)';
     const value = Math.max(scale.min, Math.min(scale.max, node.heat));
@@ -54,9 +57,20 @@ export function mountTreeMap(host, model) {
     if (authorMode) {
       labels.replaceChildren(); bar.style.background = 'none'; bar.style.height = 'auto';
       bar.replaceChildren();
-      for (const author of [...(model.authors ?? []), { name: 'Unknown author', color: '#c9d0d8' }]) {
-        const entry = document.createElement('span'); entry.style.cssText = 'display:inline-block;margin:4px 10px 4px 0';
-        const swatch = document.createElement('span'); swatch.style.cssText = `display:inline-block;width:12px;height:12px;margin-right:4px;background:${author.color}`;
+      for (const author of [...(model.authors ?? []), { id: '__unknown__', name: 'Unknown author', color: neutralAuthorColor }]) {
+        const entry = document.createElement('button'); entry.type = 'button';
+        const active = !disabledAuthors.has(author.id);
+        entry.setAttribute('aria-pressed', String(active));
+        entry.title = active ? 'Autor ausblenden' : 'Autor einblenden';
+        entry.style.cssText = 'display:inline-flex;align-items:center;margin:4px 8px 4px 0;padding:4px 7px;border:1px solid var(--cv-input-border,#777);border-radius:4px;background:var(--cv-surface,#fff);color:var(--cv-text,#17212b)';
+        entry.onclick = () => {
+          if (disabledAuthors.has(author.id)) disabledAuthors.delete(author.id); else disabledAuthors.add(author.id);
+          drawLegend(); draw();
+          [...bar.querySelectorAll('button')].find(button => button.dataset.author === author.id)?.focus();
+        };
+        entry.dataset.author = author.id;
+        entry.style.textDecoration = active ? 'none' : 'line-through';
+        const swatch = document.createElement('span'); swatch.style.cssText = `display:inline-block;width:12px;height:12px;margin-right:4px;background:${active ? author.color : neutralAuthorColor}`;
         entry.append(swatch, document.createTextNode(author.name)); bar.append(entry);
       }
       return;
@@ -124,6 +138,29 @@ export function mountTreeMap(host, model) {
   }
   legend.append(bar, labels); root.append(nav, hint, map, legend, controls, detail);
   let trail = [model.tree], selectedFile = null;
+  function restorePath(path) {
+    const next = [model.tree];
+    let node = model.tree;
+    while (node.path !== path) {
+      const child = (node.children ?? []).find(child => child.children && (child.path === path || path.startsWith(child.path + '/')));
+      if (!child) break;
+      next.push(child); node = child;
+    }
+    trail = next; selectedFile = null; draw(); publishPath();
+  }
+  function publishPath() {
+    const path = trail.at(-1).path || '';
+    if (window.parent !== window) window.parent.postMessage({ type: 'code-view-path', path }, '*');
+    else {
+      const url = new URL(window.location.href);
+      if (!['http:', 'https:', 'file:'].includes(url.protocol)) return;
+      if (path) url.searchParams.set('treemapPath', path); else url.searchParams.delete('treemapPath');
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }
+  window.addEventListener('message', event => {
+    if (event.source === window.parent && event.data?.type === 'code-view-set-path' && typeof event.data.path === 'string') restorePath(event.data.path);
+  });
   function describe(node) {
     if (node.children && node.kind !== 'file') return `${node.path || '/'}\nFläche: ${node.area}\nKlicken, um dieses Verzeichnis zu öffnen.`;
     const lines = [node.path, `Fläche (${model.areaMetric}): ${node.area}`, `Heat-Score: ${node.heat ?? 'No applicable function score'}`];
@@ -148,6 +185,12 @@ export function mountTreeMap(host, model) {
       values.append(element('dt', name), element('dd', String(value)));
     }
     summary.append(values); grid.append(summary);
+    if (node.authorship?.authors?.length) {
+      const section = element('section'); section.append(element('h3', node.kind === 'function' ? 'Autorschaft · zugehörige Datei' : 'Autorschaft'));
+      const list = element('dl');
+      for (const author of node.authorship.authors) list.append(element('dt', author.name), element('dd', `${(author.share * 100).toFixed(1)}%`));
+      section.append(list, element('small', node.authorship.basis === 'commits' ? 'Basis: Commits' : 'Basis: gewichtete Zeilenänderungen')); grid.append(section);
+    }
     if (!node.children || node.kind === 'file') {
       if (node.kind === 'function') summary.append(element('p', `${node.name} · ${node.functionKind} · line ${node.line}:${node.column} · Size: ${node.sizeMetric}`));
       if (node.heat == null) summary.append(element('p', node.kind === 'outside' ? 'Outside functions' : 'No applicable function score'));
@@ -201,7 +244,7 @@ export function mountTreeMap(host, model) {
     map.replaceChildren(); nav.replaceChildren();
     trail.forEach((node, index) => {
       const button = document.createElement('button'); button.textContent = node.name; button.type = 'button';
-      button.onclick = () => { selectedFile = null; trail = trail.slice(0, index + 1); draw(); }; nav.append(button);
+      button.onclick = () => { selectedFile = null; trail = trail.slice(0, index + 1); draw(); publishPath(); }; nav.append(button);
     });
     const layout = [];
     const width = map.clientWidth || 800, height = map.clientHeight || 560;
@@ -228,6 +271,13 @@ export function mountTreeMap(host, model) {
       const tile = document.createElement('button'); tile.className = node.children ? 'tile directory' : 'tile'; tile.type = 'button';
       if (box.frame) { tile.classList.add('file-frame'); tile.style.border = `4px solid ${heatColor(node)}`; tile.style.display = 'flex'; tile.style.alignItems = 'flex-start'; }
       Object.assign(tile.style, { left: `${100 * box.x / width}%`, top: `${100 * box.y / height}%`, width: `${100 * box.width / width}%`, height: `${100 * box.height / height}%`, background: box.frame ? 'var(--cv-subtle,#edf0f3)' : heatColor(node) });
+      if (authorMode && !node.children) {
+        const color = heatColor(node);
+        const rgb = /^#([0-9a-f]{6})$/i.exec(color);
+        const luminance = rgb ? [0, 2, 4].map(i => parseInt(rgb[1].slice(i, i+2), 16) / 255).map(c => c <= .04045 ? c/12.92 : ((c+.055)/1.055)**2.4).reduce((sum,c,i) => sum+c*[.2126,.7152,.0722][i], 0) : .5;
+        tile.style.color = luminance > .179 ? '#111' : '#fff';
+        tile.style.textShadow = 'none';
+      }
       tile.textContent = `${node.name}${node.kind === 'function' ? ` (${node.line}:${node.column})` : node.children && node.kind !== 'file' ? '/' : ''}`;
       tile.title = describe(node); tile.setAttribute('aria-label', tile.title);
       tile.onmouseenter = () => { if (!selectedFile) showDetail(node); };
@@ -250,7 +300,7 @@ export function mountTreeMap(host, model) {
             }
           }
           trail.push(...route(focus).slice(1));
-          draw();
+          draw(); publishPath();
         }
       };
       map.append(tile);
@@ -258,6 +308,7 @@ export function mountTreeMap(host, model) {
     if (!layout.length) map.textContent = 'Keine darstellbaren Dateien.';
   }
   draw();
+  if (window.parent === window && new URLSearchParams(window.location.search).has('treemapPath')) restorePath(new URLSearchParams(window.location.search).get('treemapPath'));
   if (typeof ResizeObserver !== 'undefined') {
     const observer = new ResizeObserver(() => { if (host.isConnected) draw(); else observer.disconnect(); });
     observer.observe(host);
