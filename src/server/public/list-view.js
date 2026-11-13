@@ -27,6 +27,7 @@ export function selectRows(rows, state) {
 }
 const states = new Map();
 let cacheKey, cachePromise;
+export function clearListDataCache() { cacheKey = undefined; cachePromise = undefined; }
 export async function mountInspectionList(host, { kind, inspection, preset, api, openDetail }) {
   const key = JSON.stringify([inspection.id, inspection.result, preset]);
   if (cacheKey !== key) {

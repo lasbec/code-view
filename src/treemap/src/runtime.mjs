@@ -2,7 +2,7 @@
 export function mountTreeMap(host, model) {
   const root = host.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
-  style.textContent = ':host{display:flex;flex-direction:column;font:14px system-ui,sans-serif;color:var(--cv-text,#17212b)}*{box-sizing:border-box}nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;flex-shrink:0}button{font:inherit;cursor:pointer}nav button{border:1px solid var(--cv-input-border,#aaa);border-radius:4px;background:var(--cv-surface,#fff);color:var(--cv-text,#17212b);padding:3px 7px}.map{flex:1 1 auto;position:relative;width:100%;height:var(--treemap-height,560px);min-height:100px;background:var(--cv-subtle,#f0f2f4);overflow:hidden}.tile{position:absolute;border:1px solid var(--cv-heat-border,#fff);border-radius:0;color:var(--cv-heat-text,#111);overflow:hidden;text-align:left;padding:4px;font-size:12px;text-shadow:var(--cv-heat-label-shadow,0 1px 2px #ffffffb0)}.tile.file-frame{color:var(--cv-text,#17212b);text-shadow:none}.tile.directory{padding:0 5px;line-height:22px;white-space:nowrap;text-overflow:ellipsis;font-weight:600}.tile:focus-visible{outline:3px solid var(--cv-accent,#152dff);outline-offset:-3px;z-index:2}.legend{margin:6px 0 0;flex-shrink:0}.bar{height:10px;border:1px solid var(--cv-input-border,#555)}.labels{position:relative;height:22px;font-size:11px}.labels span{position:absolute;transform:translateX(-50%);white-space:nowrap}.detail{flex:0 0 132px;height:132px;overflow-wrap:anywhere;padding:8px 10px;background:var(--cv-subtle,#f0f2f4);max-height:132px;overflow:auto;font-size:12px}.detail-path{display:block;margin-bottom:6px}.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px 20px}.detail h3{font-size:12px;margin:0 0 5px}.detail dl{display:grid;grid-template-columns:1fr auto;gap:3px 10px;margin:0}.detail dt,.detail dd{margin:0}.detail dd{font-variant-numeric:tabular-nums}.detail p{margin:2px 0}.detail table{width:100%;border-collapse:collapse;font-size:11px}.detail td{padding:2px 8px 2px 0}.detail td:last-child{text-align:right}.detail td small{display:block;font-size:10px}.detail small{color:var(--cv-muted,#586779)}.hint{margin:4px 0;color:var(--cv-muted,#47505c);font-size:11px;flex-shrink:0}';
+  style.textContent = ':host{display:flex;flex-direction:column;font:14px system-ui,sans-serif;color:var(--cv-text,#17212b)}*{box-sizing:border-box}nav{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:4px;flex-shrink:0;font-size:12px;line-height:1.5}button{font:inherit;cursor:pointer}nav button{border:0;border-radius:0;background:none;color:var(--cv-link,#2458a6);padding:0;text-decoration:underline;text-underline-offset:2px}nav button+button::before{content:"›";display:inline-block;margin-right:5px;color:var(--cv-muted,#586779);text-decoration:none}nav button:focus-visible{outline:2px solid var(--cv-accent,#152dff);outline-offset:2px}.map{flex:1 1 auto;position:relative;width:100%;height:var(--treemap-height,560px);min-height:100px;background:var(--cv-subtle,#f0f2f4);overflow:hidden}.tile{position:absolute;border:1px solid var(--cv-heat-border,#fff);border-radius:0;color:var(--cv-heat-text,#111);overflow:hidden;text-align:left;padding:4px;font-size:12px;text-shadow:var(--cv-heat-label-shadow,0 1px 2px #ffffffb0)}.tile.file-frame{color:var(--cv-text,#17212b);text-shadow:none}.tile.directory{padding:0 5px;line-height:22px;white-space:nowrap;text-overflow:ellipsis;font-weight:600}.tile:focus-visible{outline:3px solid var(--cv-accent,#152dff);outline-offset:-3px;z-index:2}.legend{margin:6px 0 0;flex-shrink:0}.bar{height:10px;border:1px solid var(--cv-input-border,#555)}.detail{flex:0 0 132px;height:132px;overflow-wrap:anywhere;padding:8px 10px;background:var(--cv-subtle,#f0f2f4);max-height:132px;overflow:auto;font-size:12px}.detail-path{display:block;margin-bottom:6px}.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px 20px}.detail h3{font-size:12px;margin:0 0 5px}.detail dl{display:grid;grid-template-columns:1fr auto;gap:3px 10px;margin:0}.detail dt,.detail dd{margin:0}.detail dd{font-variant-numeric:tabular-nums}.detail p{margin:2px 0}.detail table{width:100%;border-collapse:collapse;font-size:11px}.detail td{padding:2px 8px 2px 0}.detail td:last-child{text-align:right}.detail td small{display:block;font-size:10px}.detail small{color:var(--cv-muted,#586779)}.hint{margin:4px 0;color:var(--cv-muted,#47505c);font-size:11px;flex-shrink:0}';
   root.append(style);
   style.textContent += '.heat-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px;font-size:11px}.heat-controls label{display:flex;align-items:center;gap:4px;white-space:nowrap}.heat-controls input{width:76px;min-width:0;padding:3px 5px;font:inherit;color:inherit;background:var(--cv-surface,#fff);border:1px solid var(--cv-input-border,#aaa);border-radius:4px}.heat-controls input:focus-visible{outline:2px solid var(--cv-accent,#152dff)}.heat-controls button{padding:3px 7px;font-size:11px;color:inherit;background:var(--cv-surface,#fff);border:1px solid var(--cv-input-border,#aaa);border-radius:4px}.heat-status{color:var(--cv-muted,#586779)}.heat-status.error{color:var(--cv-danger,#b00020)}';
   const nav = document.createElement('nav');
@@ -12,7 +12,6 @@ export function mountTreeMap(host, model) {
   const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = `Fläche: ${model.areaMetric}. Verzeichnisse anklicken, um hineinzuzoomen.`;
   const legend = document.createElement('div'); legend.className = 'legend';
   const bar = document.createElement('div'); bar.className = 'bar';
-  const labels = document.createElement('div'); labels.className = 'labels';
   const scale = model.legend;
   let scaleChanged = false;
   let authorMode = false;
@@ -56,7 +55,7 @@ export function mountTreeMap(host, model) {
   }
   function drawLegend() {
     if (authorMode) {
-      labels.replaceChildren(); bar.style.background = 'none'; bar.style.height = 'auto';
+      bar.style.background = 'none'; bar.style.height = 'auto';
       bar.replaceChildren();
       for (const author of [...(model.authors ?? []), { id: '__unknown__', name: 'Unknown author', color: neutralAuthorColor }]) {
         const entry = document.createElement('button'); entry.type = 'button';
@@ -66,6 +65,7 @@ export function mountTreeMap(host, model) {
         entry.style.cssText = 'display:inline-flex;align-items:center;margin:4px 8px 4px 0;padding:4px 7px;border:1px solid var(--cv-input-border,#777);border-radius:4px;background:var(--cv-surface,#fff);color:var(--cv-text,#17212b)';
         entry.onclick = () => {
           if (disabledAuthors.has(author.id)) disabledAuthors.delete(author.id); else disabledAuthors.add(author.id);
+          if (window.parent !== window) window.parent.postMessage({ type: 'code-view-authors', disabledAuthors: [...disabledAuthors] }, '*');
           drawLegend(); draw();
           [...bar.querySelectorAll('button')].find(button => button.dataset.author === author.id)?.focus();
         };
@@ -78,15 +78,8 @@ export function mountTreeMap(host, model) {
     }
     bar.replaceChildren(); bar.style.height = '10px';
     [scale.min, scale.yellowFrom, scale.redFrom, scale.max].forEach((value,i) => { heatStops[i][0] = value; });
-    labels.replaceChildren();
     bar.style.background = scale.max === scale.min ? heatStops[0][1] : `linear-gradient(to right,${heatStops[0][1]},${heatStops[1][1]} ${percent(scale.yellowFrom)}%,${heatStops[2][1]} ${percent(scale.redFrom)}%,${heatStops[3][1]})`;
-    for (const [name, value] of [['Grün', scale.min], ['Gelb ab', scale.yellowFrom], ['Rot ab', scale.redFrom], ['Violett', scale.max]]) {
-      if (scale.max === scale.min && name !== 'Grün') continue;
-      const label = document.createElement('span'); label.style.left = `${percent(value)}%`; label.textContent = `${name}: ${Number(value.toPrecision(5))}`;
-      if (value === scale.min) label.style.transform = 'none';
-      else if (value === scale.max) label.style.transform = 'translateX(-100%)';
-      labels.append(label);
-    }
+
   }
   drawLegend();
   const controls = document.createElement('form'); controls.className = 'heat-controls'; controls.setAttribute('aria-label', 'Heat thresholds');
@@ -105,7 +98,7 @@ export function mountTreeMap(host, model) {
   controls.append(apply, auto, status);
   controls.onsubmit = event => { event.preventDefault(); applyHeat(); };
   auto.onclick = () => { for (const input of fields.values()) input.value = ''; applyHeat(); };
-  function applyHeat() {
+  function applyHeat(publish = true) {
     if (!controls.reportValidity()) return;
     const heat = {};
     for (const [key,input] of fields) if (input.value !== '') heat[key] = Number(input.value);
@@ -119,6 +112,7 @@ export function mountTreeMap(host, model) {
     for (const [key,input] of fields) input.placeholder = String(Number(scale[key].toPrecision(5)));
     drawLegend(); draw();
     status.classList.remove('error'); status.textContent = 'Applied';
+    if (!publish) return;
     const message = { type: 'code-view-heat', heat };
     host.dispatchEvent(new CustomEvent(message.type, { detail: message, bubbles: true, composed: true }));
     if (window.parent !== window) {
@@ -129,13 +123,13 @@ export function mountTreeMap(host, model) {
   window.addEventListener('message', event => {
     if (event.source !== window.parent || event.data?.type !== 'code-view-heat-result') return;
     apply.disabled = auto.disabled = false;
-    status.textContent = event.data.error || 'Saved'; status.classList.toggle('error', !!event.data.error);
+    status.textContent = event.data.error || (event.data.local ? 'Saved locally' : 'Saved'); status.classList.toggle('error', !!event.data.error);
   });
   if (model.authors) {
     const colorLabel = element('label', 'Color by '), colorSelect = document.createElement('select');
     for (const [value,text] of [['score','Score'],['author','Main author']]) { const option = document.createElement('option'); option.value=value; option.textContent=text; colorSelect.append(option); }
     colorSelect.setAttribute('aria-label','Color by'); colorSelect.onchange=()=>{authorMode=colorSelect.value==='author';controls.hidden=authorMode;drawLegend();draw();};
-    colorLabel.append(colorSelect); root.append(colorLabel);
+    colorLabel.append(colorSelect); if (window.parent === window) root.append(colorLabel);
   }
   const directoryLabel = element('label', undefined, 'directory-control');
   const directoryCheckbox = document.createElement('input'); directoryCheckbox.type = 'checkbox'; directoryCheckbox.checked = showDirectories;
@@ -144,10 +138,10 @@ export function mountTreeMap(host, model) {
     hint.textContent = `Fläche: ${model.areaMetric}.${showDirectories ? ' Verzeichnisse anklicken, um hineinzuzoomen.' : ''}`;
     draw();
   };
-  directoryLabel.append(directoryCheckbox, document.createTextNode('Verzeichnisse anzeigen'));
+  directoryLabel.append(directoryCheckbox, document.createTextNode('Show directories'));
   directoryLabel.style.cssText = 'display:flex;align-items:center;gap:5px;margin:4px 0;flex-shrink:0';
-  root.append(directoryLabel);
-  legend.append(bar, labels); root.append(nav, hint, map, legend, controls, detail);
+  if (window.parent === window) root.append(directoryLabel);
+  legend.append(bar); root.append(nav); if (window.parent === window) root.append(hint); root.append(map, legend, controls, detail);
   let trail = [model.tree], selectedFile = null;
   function restorePath(path) {
     const next = [model.tree];
@@ -170,6 +164,18 @@ export function mountTreeMap(host, model) {
     }
   }
   window.addEventListener('message', event => {
+    if (event.source === window.parent && event.data?.type === 'code-view-options') {
+      if (typeof event.data.showDirectories === 'boolean') showDirectories = event.data.showDirectories;
+      if (typeof event.data.colorByAuthor === 'boolean') authorMode = event.data.colorByAuthor;
+      if (Array.isArray(event.data.disabledAuthors)) {
+        disabledAuthors.clear(); for (const id of event.data.disabledAuthors) if (typeof id === 'string') disabledAuthors.add(id);
+      }
+      if (event.data.heat && typeof event.data.heat === 'object') {
+        for (const [key,input] of fields) input.value = event.data.heat[key] ?? '';
+        applyHeat(false);
+      }
+      controls.hidden = authorMode; drawLegend(); draw();
+    }
     if (event.source === window.parent && event.data?.type === 'code-view-set-path' && typeof event.data.path === 'string') restorePath(event.data.path);
   });
   function describe(node) {

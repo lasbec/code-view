@@ -217,3 +217,12 @@ label contrast. File and function details show proportional authorship from the
 selected developer preset (independent of winner attribution); function shares
 refer to the containing file. The URL parameter `treemapPath` preserves zoom
 across settings changes and reloads, falling back to the closest visible ancestor.
+
+The browser caches treemap, file/function lists, developer data, graph data and
+item details in memory (up to 32 requests). Successful inspection or preset
+changes invalidate cached data. The navbar's Reload button clears the data caches
+and fetches the current view again. Display options, disabled authors and per
+inspection/preset Heat thresholds are stored separately in localStorage and
+survive Reload and browser refresh. Heat Apply/Auto changes are local to this
+browser; they do not modify the saved server preset. If browser storage is
+unavailable, preferences still work for the current session.

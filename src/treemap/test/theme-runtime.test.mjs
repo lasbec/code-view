@@ -36,7 +36,7 @@ test('compact heat controls recolor tiles and borders, validate thresholds and r
     const tile=[...root.querySelectorAll('.tile')].find(n=>n.textContent.startsWith('f4 '));
     assert.equal(tile.style.background,themed?'var(--cv-heat-yellow,rgb(255,215,0))':'rgb(255, 215, 0)');
     assert.equal(root.querySelector('nav').textContent,nav);
-    assert.match(root.querySelector('.labels').textContent,/Gelb ab: 50/);
+    assert.equal(root.querySelector('.labels'),null);
     message=null;field('redFrom').value='40';
     const before=root.querySelector('.bar').style.background;
     form.dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
@@ -45,7 +45,7 @@ test('compact heat controls recolor tiles and borders, validate thresholds and r
     [...form.querySelectorAll('button')].find(b=>b.textContent==='Auto').click();
     assert.deepEqual(Object.keys(message.heat),[]);
     assert.equal(field('max').value,'');assert.equal(field('max').placeholder,'120');
-    assert.match(root.querySelector('.labels').textContent,/Violett: 120/);
+    assert.equal(root.querySelector('.labels'),null);
     assert.equal(root.querySelector('nav').textContent,nav);
     const neutral=[...root.querySelectorAll('.tile')].find(n=>n.textContent.startsWith('f8 '));
     assert.match(neutral.style.background,/--cv-heat-neutral/);
@@ -140,4 +140,17 @@ test('directory checkbox hides directory headers and keeps files and zoom availa
   assert.equal(root.querySelector('nav').textContent,path);
   assert.ok(tile());
   checkbox.click();assert.ok(root.querySelector('.directory'));
+});
+
+test('frontend view settings restore heat thresholds without emitting save messages',t=>{
+  const {root,dom,host}=mount(t,{min:0,yellowFrom:30,redFrom:70,max:100});
+  let saves=0;host.addEventListener('code-view-heat',()=>saves++);
+  dom.window.dispatchEvent(new dom.window.MessageEvent('message',{source:dom.window.parent,data:{type:'code-view-options',showDirectories:false,colorByAuthor:false,heat:{min:0,yellowFrom:20,redFrom:40,max:80}}}));
+  assert.equal(root.querySelector('[name="yellowFrom"]').value,'20');
+  assert.equal(root.querySelector('[name="max"]').value,'80');
+  assert.equal(saves,0);
+  assert.match(root.querySelector('.file-frame').style.border,/75%/);
+  dom.window.dispatchEvent(new dom.window.MessageEvent('message',{source:dom.window.parent,data:{type:'code-view-options',heat:{}}}));
+  assert.equal(root.querySelector('[name="max"]').value,'');
+  assert.equal(saves,0);
 });

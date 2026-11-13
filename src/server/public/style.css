@@ -90,3 +90,5 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--cv-accent);outline-
 @media(max-width:480px){header .local{display:none}.theme-picker{gap:5px}.theme-picker select{max-width:105px}}
 
 .inspect-authorship{margin:18px 0 24px}.inspect-authorship h2{font-size:14px;margin:0 0 10px}.authorship-legend{margin:0 0 10px}.authorship-legend strong{font-variant-numeric:tabular-nums}.authorship-composition span+span{border-left:1px solid var(--cv-surface)}
+
+#reload-data{align-self:center;padding:5px 10px;font-size:12px;margin:4px 0}

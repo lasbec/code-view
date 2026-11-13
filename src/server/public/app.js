@@ -1,6 +1,7 @@
+import { createDataCache, readPreferences, savePreferences } from './frontend-state.js';
 import { mountDevelopers } from './developers-view.js';
 import { mountGraph } from './graph-view.js';
-import { mountInspectionList } from './list-view.js';
+import { mountInspectionList, clearListDataCache } from './list-view.js';
 import { showDetailRoute, closeDetail, detailHash } from './detail-view.js';
 import { metricSelect, functionAreaSelect, termHtml, scoreHtml, readScores, operationSelect, updateAggregation } from './preset-fields.js';
 import { progressHtml } from './progress-view.js';
@@ -8,7 +9,15 @@ import { metricHelpHtml, filterMetricHelp } from './metric-help.js';
 import { initTheme, treemapThemeStyles, receiveTreemapTheme } from './theme.js';
 initTheme();
 const view = document.querySelector('#view');
-let showFunctions = false;
+const preferences = readPreferences(), dataCache = createDataCache();
+let showFunctions = preferences.showFunctions === true, showDirectories = preferences.showDirectories !== false, colorByAuthor = preferences.colorByAuthor === true;
+let dataContext = '';
+function saveViewPreferences() {
+  Object.assign(preferences, { showFunctions, showDirectories, colorByAuthor }); savePreferences(preferences);
+}
+const preferenceKey = () => JSON.stringify([selectedInspection()?.id, selectedPreset()?.id]);
+function clearDataCaches() { dataCache.clear(); clearListDataCache(); }
+
 let state, metrics = [], newInspection = false, newPreset = false, treeKey = '', listKey = '', requestNumber = 0;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const route = () => location.hash.slice(1) || 'treemap';
@@ -18,12 +27,29 @@ const selectedPreset = () => state.presets.find(c => c.id === state.selection.pr
 const defaultPreset = () => ({ name: '', config: { area: 'code_files.effective_lines', operation: 'sum', scores: [{ name: 'Complexity', normalize: true, metrics: [{ metric: 'code_functions.cyclomatic_complexity', min: 10, aggregation: 'sum', factor: 1 }] }] }, options: {} });
 function notice(error) { const n = document.querySelector('#notice'); n.textContent = error?.message ?? error ?? ''; n.hidden = !error; }
 async function api(path, method = 'GET', data) {
-  const response = await fetch(`/api/${path}`, { method, ...(data === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }) });
-  const value = await response.json();
-  if (!response.ok || value.error) throw new Error(value.error || 'Request failed.');
+  const fetchValue = async () => {
+    const response = await fetch(`/api/${path}`, { method, ...(data === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }) });
+    const value = await response.json();
+    if (!response.ok || value.error) throw new Error(value.error || 'Request failed.');
+    return value;
+  };
+  if (method === 'GET' && /^(treemap|list|developers|detail|graph)\?/.test(path)) return dataCache.get(`${dataContext}:${path}`, fetchValue);
+  const value = await fetchValue();
+  if (method !== 'GET' && path !== 'selection') clearDataCaches();
   return value;
 }
-async function load() { state = await api('state'); }
+async function load() {
+  state = await api('state');
+  const context = JSON.stringify([state.inspections, state.presets, state.developerPresets, state.graphPresets, state.selection?.developerPreset]);
+  if (context !== dataContext) { dataContext = context; clearDataCaches(); }
+}
+document.querySelector('#reload-data').onclick = async event => {
+  const button = event.currentTarget; button.disabled = true; notice(null);
+  clearDataCaches(); requestNumber++;
+  try { await load(); closeDetail(); treeKey = listKey = ''; render(); }
+  catch (error) { notice(error); }
+  finally { button.disabled = false; }
+};
 const options = (items, id) => items.map(c => `<option value="${esc(c.id)}" ${c.id === id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
 const heading = (title, text) => `<div class="page-heading"><h1>${title}</h1><p class="muted">${text}</p></div>`;
 const input = (label, name, value, extra = '') => `<label>${label}<input name="${name}" value="${esc(value)}" ${extra}></label>`;
@@ -124,7 +150,7 @@ function updateProgress() {
 function treemapView() {
   const c = selectedInspection(), p = selectedPreset();
   view.innerHTML =
-    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}${selection(state.presets, p?.id, 'Treemap configuration', 'preset')}<label class="checkbox-label"><input type="checkbox" id="show-functions" ${showFunctions ? 'checked' : ''}>Show functions</label>${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
+    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}<label>Treemap configuration<select data-select="preset">${options(state.presets, colorByAuthor ? null : p?.id)}<optgroup label="Special configurations"><option value="__author__" ${colorByAuthor ? 'selected' : ''}>Color by author</option></optgroup></select></label><label class="checkbox-label"><input type="checkbox" id="show-functions" ${showFunctions ? 'checked' : ''}>Show functions</label><label class="checkbox-label"><input type="checkbox" id="show-directories" ${showDirectories ? 'checked' : ''}>Show directories</label>${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}${p ? ` · Area: ${esc(p.config.area)}.` : ''}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
   if (!c) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Please configure inspection</h2><p class="muted">Choose a local repository to get started.</p><a class="button primary" href="#inspections">Configure inspection</a></div>';
   else if (!c.hasResults) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Start inspection</h2><p class="muted">Run the inspectors to explore this repository.</p></div>';
   else if (!p) document.querySelector('#map').innerHTML = '<div class="card empty"><h2>Please configure a treemap preset</h2><a class="button" href="#presets">Create preset</a></div>';
@@ -140,6 +166,7 @@ async function drawMap(c, p, number) {
     const frame = document.createElement('iframe'); frame.title = 'Code treemap'; frame.setAttribute('sandbox', 'allow-scripts allow-forms');
     frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style id="theme-style">${treemapThemeStyles()}</style><style>html,body{height:100%;box-sizing:border-box}body{margin:0;padding:6px;font-family:system-ui;overflow:hidden;background:var(--cv-bg);color:var(--cv-text)}.code-view-treemap{height:100%;min-height:0;--treemap-height:auto}</style><script>(${receiveTreemapTheme.toString()})();<\/script></head><body>${result.treeMapHtml}</body></html>`;
     frame.addEventListener('load', () => {
+      sendTreeViewOptions();
       frame.contentWindow.postMessage({ type: 'code-view-theme', styles: treemapThemeStyles() }, '*');
       frame.contentWindow.postMessage({ type: 'code-view-set-path', path: new URLSearchParams(location.search).get('treemapPath') ?? '' }, '*');
     });
@@ -152,16 +179,24 @@ async function drawMap(c, p, number) {
     document.querySelector('#warnings').open = true;
   }
 }
+function sendTreeViewOptions() {
+  document.querySelector('#map iframe')?.contentWindow?.postMessage({ type: 'code-view-options', showDirectories, colorByAuthor, heat: preferences.heat?.[preferenceKey()], disabledAuthors: preferences.disabledAuthors?.[preferenceKey()] ?? [] }, '*');
+}
 view.addEventListener('input', event => {
   if (event.target.id === 'metric-help-search') filterMetricHelp(view, event.target.value);
 });
 document.addEventListener('change', async event => {
-  if (event.target.id === 'show-functions') { showFunctions = event.target.checked; render(); return; }
+  if (event.target.id === 'show-directories') { showDirectories = event.target.checked; saveViewPreferences(); sendTreeViewOptions(); return; }
+  if (event.target.id === 'show-functions') { showFunctions = event.target.checked; saveViewPreferences(); render(); return; }
   if (event.target.name === 'metric') updateAggregation(event.target.closest('.term'));
   if (event.target.name === 'aggregation' && event.target.closest('.term')) event.target.closest('.term').querySelector('.quantile-field').hidden = event.target.value !== 'quantile';
   if (event.target.name === 'operation') document.querySelector('#group-quantile').hidden = event.target.value !== 'quantile';
   const key = event.target.dataset.select;
   if (!key || !event.target.value) return;
+  if (key === 'preset') {
+    colorByAuthor = event.target.value === '__author__'; saveViewPreferences();
+    if (colorByAuthor) { sendTreeViewOptions(); return; }
+  }
   try { await api('selection', 'POST', { [key]: event.target.value }); newInspection = newPreset = false; await load(); render(); } catch (e) { notice(e); }
 });
 view.addEventListener('submit', async event => {
@@ -227,15 +262,15 @@ window.addEventListener('message', async event => {
     history.replaceState(history.state, '', url);
     return;
   }
+  if (frame && event.source === frame.contentWindow && event.data?.type === 'code-view-authors' && Array.isArray(event.data.disabledAuthors) && event.data.disabledAuthors.every(id => typeof id === 'string')) {
+    preferences.disabledAuthors = { ...preferences.disabledAuthors, [preferenceKey()]: event.data.disabledAuthors }; savePreferences(preferences); return;
+  }
   if (frame && event.source === frame.contentWindow && event.data?.type === 'code-view-heat') {
-    const p = selectedPreset(), heat = event.data.heat, previousKey = currentTreeKey();
+    const p = selectedPreset(), heat = event.data.heat;
     try {
       if (!p || !heat || typeof heat !== 'object' || Array.isArray(heat) || Object.entries(heat).some(([key,value]) => !['min','yellowFrom','redFrom','max'].includes(key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Invalid heat thresholds.');
-      const saved = await api(`presets/${p.id}`, 'PUT', { ...p, config: { ...p.config, heat } });
-      const unchanged = currentTreeKey() === previousKey;
-      state.presets = state.presets.map(item => item.id === p.id ? saved : item);
-      if (unchanged && treeKey === previousKey) treeKey = currentTreeKey();
-      frame.contentWindow?.postMessage({ type: 'code-view-heat-result' }, '*');
+      preferences.heat = { ...preferences.heat, [preferenceKey()]: heat }; savePreferences(preferences);
+      frame.contentWindow?.postMessage({ type: 'code-view-heat-result', local: true }, '*');
     } catch (error) {
       frame.contentWindow?.postMessage({ type: 'code-view-heat-result', error: error.message }, '*');
     }
