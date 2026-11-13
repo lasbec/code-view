@@ -188,3 +188,62 @@ test('accepts databases larger than the SQLite engine initial heap', async t => 
   assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
   assert.equal(result.files[0].heat, 42);
 });
+
+test('file authors count distinct commits, respect repository/date mapping, and render safe horizontal details', async t => {
+  const { input } = fixture(t), db = new DatabaseSync(input);
+  db.exec(`ALTER TABLE git_commits ADD COLUMN author_name TEXT;
+    ALTER TABLE git_commits ADD COLUMN author_email TEXT;
+    UPDATE git_commits SET author_name='Alice',author_email='alice@example.test' WHERE hash='a';
+    UPDATE git_commits SET author_name='Bob',author_email='bob@example.test' WHERE hash='b';
+    UPDATE git_commits SET author_name='Other repo',author_email='other@example.test' WHERE hash='x';
+    INSERT INTO git_commits VALUES (1,'c','2026-03-01T00:00:00Z',0,'Alice renamed','alice@example.test'),
+      (1,'d','2026-04-01T00:00:00Z',0,'<img src=x onerror=alert(1)>','third@example.test');
+    INSERT INTO git_file_changes VALUES (1,'c',0,'packages/app/src/a.ts',NULL),
+      (1,'c',1,'packages/app/src/a.ts',NULL),(1,'d',0,'packages/app/src/a.ts',NULL);`);
+  db.close();
+  const bytes = readFileSync(input), result = await calculateTreeMap(bytes, config);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.files.find(f => f.path.endsWith('/a.ts')).topAuthors, [
+    { name: 'Alice', email: 'alice@example.test', commits: 2 }, { name: 'Bob', email: 'bob@example.test', commits: 1 },
+  ]);
+  const filtered = await calculateTreeMap(bytes, config, { since: '2026-03-15', until: '2026-05-01' });
+  assert.deepEqual(filtered.files.find(f => f.path.endsWith('/a.ts')).topAuthors, [{name:'<img src=x onerror=alert(1)>',email:'third@example.test',commits:1}]);
+  assert.deepEqual(filtered.files.find(f => f.path.endsWith('/b.ts')).topAuthors, []);
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM(renderTreeMap(filtered).treeMapHtml, { runScripts: 'dangerously' });
+  t.after(() => dom.window.close());
+  const shadow = dom.window.document.querySelector('.code-view-treemap').shadowRoot;
+  [...shadow.querySelectorAll('.tile')].find(tile => tile.textContent === 'a.ts').click();
+  assert.ok(shadow.querySelector('.detail-grid'));
+  assert.match(shadow.querySelector('.detail').textContent, /Häufigste Autoren/);
+  assert.match(shadow.querySelector('.detail').textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.equal(shadow.querySelector('.detail img'), null);
+  // Hovering a neighboring tile must not replace details of the clicked file.
+  [...shadow.querySelectorAll('.tile')].find(tile => tile.textContent === 'b.ts').dispatchEvent(new dom.window.Event('mouseenter'));
+  assert.match(shadow.querySelector('.detail-path').textContent, /a.ts$/);
+});
+
+test('older databases without author metadata remain usable', async t => {
+  const { bytes } = fixture(t);
+  const result = await calculateTreeMap(bytes, config);
+  assert.equal(result.ok, true);
+  assert.ok(result.files.every(file => file.topAuthors === null));
+});
+
+test('repository-root tsconfig maps authors and Git metrics without requiring a date filter', async t => {
+  const { input } = fixture(t), db = new DatabaseSync(input);
+  db.exec(`UPDATE code_metadata SET value='/repo/tsconfig.json' WHERE key='tsconfig';
+    UPDATE git_file_changes SET path=REPLACE(path,'packages/app/','');
+    ALTER TABLE git_commits ADD COLUMN author_name TEXT;
+    ALTER TABLE git_commits ADD COLUMN author_email TEXT;
+    UPDATE git_commits SET author_name='Alice', author_email='alice@example.test';`);
+  db.close();
+  const result = await calculateTreeMap(readFileSync(input), config);
+  assert.equal(result.ok, true);
+  const file = result.files.find(file => file.path === 'src/a.ts');
+  assert.ok(file, 'A repository-relative path must not acquire a leading slash.');
+  assert.deepEqual(file.topAuthors, [{ name:'Alice', email:'alice@example.test', commits:2 }]);
+  assert.equal(file.metrics['git.change_count'], 2);
+  const filtered = await calculateTreeMap(readFileSync(input), config, { exclude: ['/src/b.ts'] });
+  assert.ok(!filtered.files.some(file => file.path === 'src/b.ts'));
+});

@@ -8,8 +8,8 @@ export function progressHtml(job) {
     const status = cancelling && job.activeInspector === key ? 'cancelling' : p.status;
     const unknown = ['preparing', 'finalizing', 'cancelling'].includes(status);
     const count = p.total === null ? '' : `${p.completed}/${p.total} ${unit}`;
-    return `<div class="inspector-progress"><div class="progress-label"><label for="progress-${key}">${label}</label><span>${escape(count)}</span></div><progress id="progress-${key}" aria-label="${label}" aria-describedby="progress-status-${key}" max="${Math.max(1, p.total ?? 1)}" ${unknown ? '' : `value="${status === 'done' ? Math.max(1, p.total ?? 1) : p.completed}"`}></progress><span id="progress-status-${key}" class="hint">${states[status] ?? escape(status)}${p.detail ? ` · ${escape(p.detail)}` : ''}</span></div>`;
+    return `<div class="inspector-progress"><div class="progress-label"><label for="progress-${key}">${label}</label><span>${escape(count)}</span></div><progress id="progress-${key}" aria-label="${label}" aria-describedby="progress-status-${key}" max="${Math.max(1, p.total ?? 1)}" ${unknown ? '' : `value="${status === 'done' ? Math.max(1, p.total ?? 1) : p.completed}"`}></progress><span id="progress-status-${key}" class="hint" title="${escape(p.detail || states[status])}">${states[status] ?? escape(status)}${p.detail ? ` · ${escape(p.detail)}` : ''}</span></div>`;
   }).join('');
   const overall = cancelling ? 'Cancelling' : job.status === 'running' ? job.phase : job.status === 'succeeded' ? 'Inspection complete' : states[job.status];
-  return `<section class="card inspection-progress" aria-label="Inspection progress"><div class="progress-heading"><strong>${escape(job.name || 'Inspection')}</strong><span class="hint">${escape(overall)}</span></div><div class="progress-bars">${bars}</div></section>`;
+  return `<section class="inspection-progress" aria-label="Inspection progress"><div class="progress-heading"><strong>${escape(job.name || 'Inspection')}</strong><span class="hint">${escape(overall)}</span></div><div class="progress-bars">${bars}</div></section>`;
 }

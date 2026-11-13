@@ -59,3 +59,10 @@ npm test --prefix src/server
 Tests exercise configuration validation, concurrent storage updates and restart,
 real TypeScript/Git inspection, treemap generation, failed reruns, cancellation,
 and cross-origin request rejection. Tests use temporary repositories and data.
+
+On desktop, the Treemap view fits the available viewport height. The map grows
+between the compact configuration bar and status footer; file details use a
+horizontal grid. Expanded warnings and unusually large detail sets can scroll
+within their panels. Small screens retain page scrolling for usable controls.
+The two most frequent Git authors per file are calculated from the existing
+SQLite data, so no new inspection is needed to display them.

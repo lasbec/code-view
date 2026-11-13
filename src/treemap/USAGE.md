@@ -97,3 +97,12 @@ SQLite; generated snippets embed their data and renderer and need no downloads.
 Insert snippets through HTML parsing that executes their inline script, for
 example server-rendered markup. Assigning `innerHTML` alone does not execute it.
 Multiple snippets can coexist; each treemap isolates its styles in a shadow root.
+
+File details show the two authors with the most distinct commits touching the
+current file path. Identity uses the stored author email; name variants for the
+same email are combined and a deterministic name is displayed. Counts use the
+selected repository and the same since/until filters as Git metrics. Equal counts
+are ordered by email. Counts cover stored history, do not follow historical
+renames, and do not represent line ownership. Older databases without author
+columns show an unavailable-data message. A clicked file stays selected while
+moving the pointer; click another file to change it.

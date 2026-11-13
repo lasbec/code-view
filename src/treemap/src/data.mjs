@@ -11,7 +11,7 @@ export const normalizePath = value => {
   }
   return (value.startsWith('/') ? '/' : '') + parts.join('/');
 };
-const join = (base, value) => /^(\/|[A-Za-z]:)/.test(value) ? normalizePath(value) : normalizePath(`${base}/${value}`);
+const join = (base, value) => /^(\/|[A-Za-z]:)/.test(value) ? normalizePath(value) : normalizePath(base ? `${base}/${value}` : value);
 const directory = value => value.slice(0, value.lastIndexOf('/'));
 function rows(db, sql, params = []) {
   const statement = db.prepare(sql);
@@ -124,7 +124,7 @@ function sources(db, options) {
   for (const [alias, target] of Object.entries({ 'code.function_count': 'code_functions.count', 'code.call_count': 'code_calls.count', 'git.change_count': 'git_file_changes.count', 'git.conflict_count': 'git_merge_conflict_files.count' })) {
     if (catalog.has(target)) catalog.set(alias, catalog.get(target));
   }
-  return { catalog, prefix, base };
+  return { catalog, prefix, base, changes, params };
 }
 export function colorFor(value, legend) {
   const { min, max, yellowFrom, redFrom } = legend;
@@ -172,12 +172,27 @@ export async function calculateTreeMap(bytes, config, options = {}) {
     if (!bytes.byteLength) fail('Die SQLite-Datei ist leer.');
     const SQL = await (engine ??= initSqlJs());
     db = new SQL.Database(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes);
-    const { catalog, prefix, base } = sources(db, options);
+    const { catalog, prefix, base, changes, params } = sources(db, options);
     const selected = validate(config, catalog);
     const needed = new Set([selected.area, ...selected.scores.flatMap(s => s.metrics.map(t => t.metric))]);
     const files = rows(db, 'SELECT id FROM code_files').map(row => ({ id: row.id, path: join(prefix, row.id), metrics: {} })).filter(file =>
-      (!(options.include?.length) || options.include.some(p => minimatch(file.path, p, { dot: true }))) && !(options.exclude ?? []).some(p => minimatch(file.path, p, { dot: true })));
+      (!(options.include?.length) || options.include.some(p => minimatch(file.path, p.replace(/^\/+/, ''), { dot: true }))) && !(options.exclude ?? []).some(p => minimatch(file.path, p.replace(/^\/+/, ''), { dot: true })));
     const byPath = new Map(files.map(f => [f.path, f]));
+    // Count each commit once, even if a change table contains repeated paths.
+    const authorColumns = changes ? new Set(rows(db, 'PRAGMA table_info(git_commits)').map(c => c.name)) : new Set();
+    const hasAuthors = authorColumns.has('author_name') && authorColumns.has('author_email');
+    for (const file of files) file.topAuthors = hasAuthors ? [] : null;
+    if (hasAuthors) {
+      const authors = rows(db, `SELECT ch.path, c.author_email AS email,
+        MIN(c.author_name) AS name, COUNT(DISTINCT c.hash) AS commits
+        FROM ${changes} ch JOIN git_commits c ON c.repository_id=ch.repository_id AND c.hash=ch.commit_hash
+        GROUP BY ch.path, c.author_email
+        ORDER BY ch.path, commits DESC, email COLLATE BINARY`, params);
+      for (const author of authors) {
+        const file = byPath.get(normalizePath(author.path));
+        if (file && file.topAuthors.length < 2) file.topAuthors.push({ name: author.name, email: author.email, commits: author.commits });
+      }
+    }
     for (const metric of needed) {
       const source = catalog.get(metric);
       const aggregates = rows(db, `SELECT ${source.file} AS file, SUM(COALESCE(${source.expression},0)) AS value, SUM(CASE WHEN ${source.expression} IS NULL THEN 1 ELSE 0 END) AS missing FROM ${source.from} GROUP BY ${source.file}`, source.params);

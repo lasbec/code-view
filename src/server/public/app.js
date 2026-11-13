@@ -22,11 +22,14 @@ const patterns = (label, name, values = []) => `<label>${label}<textarea name="$
 function selection(collection, id, label, key) { return `<label>${label}<select data-select="${key}">${options(collection, id)}</select></label>`; }
 function render() {
   const outputOpen = document.querySelector('#job details')?.open ?? false;
+  document.body.classList.toggle('treemap-page', route() === 'treemap');
   requestNumber++;
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.hash === `#${route()}`));
   if (route() === 'inspections') inspectionView();
   else if (route() === 'presets') presetView();
   else treemapView();
+  const toolbar = view.querySelector('.toolbar');
+  document.querySelector('#configuration-bar').replaceChildren(...(toolbar ? [toolbar] : []));
   updateProgress();
   const output = document.querySelector('#job details');
   if (output) output.open = outputOpen;
@@ -65,9 +68,10 @@ function presetView() {
 function jobHtml() {
   const j = state.job;
   if (!j) return '';
-  return `<div class="status ${j.status === 'failed' ? 'failed' : ''}"><strong>${esc(j.phase)}</strong><span>${esc(j.status)}</span>${j.branch ? `<span>Branch: ${esc(j.branch)}</span>` : ''}${j.status === 'running' ? `<button data-action="cancel" ${j.cancelled ? 'disabled' : ''}>${j.cancelled ? 'Cancelling…' : 'Cancel inspection'}</button>` : ''}<details><summary>Inspection output</summary><pre>${esc(j.error || '')}\n${esc(j.log)}</pre></details></div>`;
+  return `<div class="status ${j.status === 'failed' ? 'failed' : ''}">${j.branch ? `<span class="job-branch" title="${esc(j.branch)}">Branch: ${esc(j.branch)}</span>` : ''}${j.status === 'running' ? `<button data-action="cancel" ${j.cancelled ? 'disabled' : ''}>${j.cancelled ? 'Cancelling…' : 'Cancel inspection'}</button>` : ''}<details><summary>Inspection output</summary><pre>${esc(j.error || '')}\n${esc(j.log)}</pre></details></div>`;
 }
 function updateProgress() {
+  document.querySelector('#inspection-footer').hidden = !state.job;
   document.querySelector('#progress').innerHTML = progressHtml(state.job);
   const job = document.querySelector('#job');
   if (job) {
@@ -88,8 +92,8 @@ function updateProgress() {
 }
 function treemapView() {
   const c = selectedInspection(), p = selectedPreset();
-  view.innerHTML = heading('Treemap', 'Explore code size, complexity and change history.') +
-    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}${selection(state.presets, p?.id, 'Treemap configuration', 'preset')}${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="job">${jobHtml()}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
+  view.innerHTML =
+    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}${selection(state.presets, p?.id, 'Treemap configuration', 'preset')}${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
   if (!c) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Please configure inspection</h2><p class="muted">Choose a local repository to get started.</p><a class="button primary" href="#inspections">Configure inspection</a></div>';
   else if (!c.hasResults) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Start inspection</h2><p class="muted">Run the inspectors to explore this repository.</p></div>';
   else if (!p) document.querySelector('#map').innerHTML = '<div class="card empty"><h2>Please configure a treemap preset</h2><a class="button" href="#presets">Create preset</a></div>';
@@ -103,7 +107,7 @@ async function drawMap(c, p, number) {
     if (number !== requestNumber || route() !== 'treemap') return;
     metrics = result.metrics;
     const frame = document.createElement('iframe'); frame.title = 'Code treemap'; frame.setAttribute('sandbox', 'allow-scripts');
-    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;padding:16px;font-family:system-ui}</style></head><body>${result.treeMapHtml}</body></html>`;
+    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{height:100%;box-sizing:border-box}body{margin:0;padding:6px;font-family:system-ui;overflow:hidden}.code-view-treemap{height:100%;min-height:0;--treemap-height:auto}</style></head><body>${result.treeMapHtml}</body></html>`;
     document.querySelector('#map').replaceChildren(frame);
     document.querySelector('#warning-content').innerHTML = result.treeMapWarningsHtml;
   } catch (error) {
@@ -113,7 +117,7 @@ async function drawMap(c, p, number) {
     document.querySelector('#warnings').open = true;
   }
 }
-view.addEventListener('change', async event => {
+document.addEventListener('change', async event => {
   const key = event.target.dataset.select;
   if (!key || !event.target.value) return;
   try { await api('selection', 'POST', { [key]: event.target.value }); newInspection = newPreset = false; await load(); render(); } catch (e) { notice(e); }
@@ -137,7 +141,7 @@ view.addEventListener('submit', async event => {
   }
   try { await api(`${collection}${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', value); newInspection = newPreset = false; await load(); render(); const message = document.createElement('p'); message.className = 'saving'; message.textContent = 'Saved.'; view.prepend(message); } catch (e) { notice(e); }
 });
-view.addEventListener('click', async event => {
+document.addEventListener('click', async event => {
   const button = event.target.closest('[data-action]'); if (!button) return;
   const action = button.dataset.action; notice(null);
   try {
