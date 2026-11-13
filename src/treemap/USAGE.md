@@ -111,6 +111,13 @@ Defaults: min 0, max the largest displayed final score, yellow/red at one/two th
 Require `min < yellowFrom < redFrom < max`; an all-zero default scale is green.
 The scale stays fixed while navigating directories.
 
+Compact Heat controls below the legend let you edit Min, Yellow, Red and Max.
+Apply recolors the map and file borders without changing scores or the current
+zoom. Blank fields are automatic; their placeholders show the calculated values.
+Auto clears all four overrides and restores the scale calculated from the results.
+In the local server, changes are saved to the selected preset. Standalone HTML
+applies them for the current page session.
+
 ## Filters and path mapping
 
 Repeat `--include 'src/**/*.ts'` and `--exclude '**/*.test.ts'` as needed.

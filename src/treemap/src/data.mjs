@@ -254,7 +254,7 @@ export async function calculateTreeMap(bytes, config, options = {}) {
     if (max < min || (max === min && !(max === 0 && selected.heat.yellowFrom === undefined && selected.heat.redFrom === undefined)) || (max > min && !(min < yellowFrom && yellowFrom < redFrom && redFrom < max))) fail('Farbstützpunkte müssen min < yellowFrom < redFrom < max erfüllen. Nur eine vollständig leere 0-Skala darf zusammenfallen.');
     const legend = { min, max, yellowFrom, redFrom };
     for (const file of scoredNodes) file.color = file.heat === null ? '#c9d0d8' : colorFor(file.heat, legend);
-    return { ok: true, files: visible, tree: makeTree(visible), legend, areaMetric: selected.area, diagnostics };
+    return { ok: true, files: visible, tree: makeTree(visible), legend, heat: selected.heat, observedMax, areaMetric: selected.area, diagnostics };
   } catch (error) {
     diagnostics.push({ severity: 'error', code: 'calculation-failed', message: `Treemap konnte nicht erstellt werden: ${error.message}` });
     return { ok: false, files: [], tree: null, legend: null, diagnostics };

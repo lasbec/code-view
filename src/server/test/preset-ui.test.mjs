@@ -59,3 +59,39 @@ test('function checkbox appears above the treemap, sends only transient GET opti
  assert.ok(requests.some(r=>r.path.includes('showFunctions=true')));assert.ok(requests.every(r=>r.options.method==='GET'));
  const second=await page();assert.equal(second.window.document.querySelector('#show-functions').checked,false);
 });
+
+test('treemap heat messages save only heat in the selected preset, retain the iframe and report save failures',async t=>{
+ const bundle=await build({entryPoints:[new URL('../public/app.js',import.meta.url).pathname],bundle:true,format:'esm',write:false});
+ const state={inspections:[{id:'repo',name:'Repo',hasResults:true}],presets:[{id:'preset',...defaultPreset()}],selection:{inspection:'repo',preset:'preset'}};
+ const original=structuredClone(state.presets[0]);
+ const dom=new JSDOM(await readFile(new URL('../public/index.html',import.meta.url),'utf8'),{url:'http://127.0.0.1:3210/#treemap',runScripts:'outside-only'});
+ t.after(()=>dom.window.close());
+ let saved,fail=false,poll;const replies=[];
+ dom.window.setInterval=callback=>{poll=callback;};
+ dom.window.fetch=async(path,options)=>{
+  if(options.method==='PUT') {
+   if(fail)return {ok:false,json:async()=>({error:'Could not save'})};
+   saved=JSON.parse(options.body);state.presets[0]={id:'preset',...saved};
+   return {ok:true,json:async()=>structuredClone(state.presets[0])};
+  }
+  return {ok:true,json:async()=>path==='/api/state'?structuredClone(state):{metrics:[],treeMapHtml:'<p>Map</p>',treeMapWarningsHtml:''}};
+ };
+ await dom.window.eval(`(async()=>{${bundle.outputFiles[0].text}\n})()`);
+ for(let i=0;i<3;i++)await new Promise(resolve=>setImmediate(resolve));
+ const frame=dom.window.document.querySelector('#map iframe');assert.ok(frame);
+ frame.contentWindow.postMessage=message=>replies.push(message);
+ const heat={min:0,yellowFrom:20,redFrom:50,max:100};
+ const send=source=>dom.window.dispatchEvent(new dom.window.MessageEvent('message',{source,data:{type:'code-view-heat',heat}}));
+ send(dom.window);assert.equal(saved,undefined);
+ send(frame.contentWindow);
+ for(let i=0;i<3;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(saved.config,{...original.config,heat});assert.deepEqual(saved.options,original.options);
+ assert.ok(replies.some(r=>r.type==='code-view-heat-result'&&!r.error));
+ await poll();assert.equal(dom.window.document.querySelector('#map iframe'),frame);
+ fail=true;send(frame.contentWindow);
+ for(let i=0;i<3;i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(replies.some(r=>r.type==='code-view-heat-result'&&r.error==='Could not save'));
+ dom.window.location.hash='#presets';
+ await new Promise(resolve=>dom.window.setTimeout(resolve,0));
+ assert.equal(dom.window.document.querySelector('[name="heat-yellowFrom"]').value,'20');
+});

@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { mountTreeMap } from '../src/runtime.mjs';
 import { colorFor } from '../src/data.mjs';
 
-function mount(t, legend, themed = true) {
+function mount(t, legend, themed = true, extra = {}) {
   const dom = new JSDOM('<div id="map"></div>', { runScripts: 'outside-only' });
   t.after(() => dom.window.close());
   const host = dom.window.document.querySelector('#map');
@@ -15,10 +15,42 @@ function mount(t, legend, themed = true) {
   }));
   const file = { kind: 'file', name: 'file', path: 'file', id: 'file', area: 90,
     heat: 50, color: colorFor(50, legend), children: nodes };
-  const model = { tree: { name: '/', children: [file] }, legend, areaMetric: 'lines' };
+  const model = { tree: { name: '/', children: [file] }, legend, areaMetric: 'lines', ...extra };
   dom.window.eval(`(${mountTreeMap.toString()})(document.querySelector('#map'), ${JSON.stringify(model)})`);
-  return { root: host.shadowRoot, model };
+  return { root: host.shadowRoot, model, dom, host };
 }
+
+test('compact heat controls recolor tiles and borders, validate thresholds and reset to automatic without losing zoom', t => {
+  for (const themed of [true, false]) {
+    const {root,dom,host}=mount(t,{min:0,yellowFrom:30,redFrom:70,max:100},themed,{heat:{max:100},observedMax:120});
+    const form=root.querySelector('.heat-controls'),field=key=>form.elements.namedItem(key);
+    assert.equal(root.querySelector('.legend').nextElementSibling,form);
+    assert.equal(form.querySelectorAll('input').length,4);
+    assert.equal(field('max').value,'100');assert.equal(field('min').value,'');
+    root.querySelector('.file-frame').click();
+    const nav=root.querySelector('nav').textContent;
+    let message;host.addEventListener('code-view-heat',event=>{message=event.detail;});
+    field('yellowFrom').value='50';field('redFrom').value='80';
+    form.dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
+    assert.equal(message.heat.yellowFrom,50);
+    const tile=[...root.querySelectorAll('.tile')].find(n=>n.textContent.startsWith('f4 '));
+    assert.equal(tile.style.background,themed?'var(--cv-heat-yellow,rgb(255,215,0))':'rgb(255, 215, 0)');
+    assert.equal(root.querySelector('nav').textContent,nav);
+    assert.match(root.querySelector('.labels').textContent,/Gelb ab: 50/);
+    message=null;field('redFrom').value='40';
+    const before=root.querySelector('.bar').style.background;
+    form.dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
+    assert.equal(message,null);assert.ok(form.querySelector('.error'));
+    assert.equal(root.querySelector('.bar').style.background,before);
+    [...form.querySelectorAll('button')].find(b=>b.textContent==='Auto').click();
+    assert.deepEqual(Object.keys(message.heat),[]);
+    assert.equal(field('max').value,'');assert.equal(field('max').placeholder,'120');
+    assert.match(root.querySelector('.labels').textContent,/Violett: 120/);
+    assert.equal(root.querySelector('nav').textContent,nav);
+    const neutral=[...root.querySelectorAll('.tile')].find(n=>n.textContent.startsWith('f8 '));
+    assert.match(neutral.style.background,/--cv-heat-neutral/);
+  }
+});
 
 test('themed heat uses shared anchors, interpolates scores, clamps outliers and distinguishes unscored tiles', t => {
   const { root, model } = mount(t, { min: 0, yellowFrom: 30, redFrom: 70, max: 100 });

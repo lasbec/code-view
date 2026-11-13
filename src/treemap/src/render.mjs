@@ -8,7 +8,7 @@ export function renderTreeMap(result) {
   if (!result.ok) treeMapHtml = '<section class="code-view-treemap" role="alert">Treemap konnte nicht erstellt werden. Details stehen im Meldungs-Snippet.</section>';
   else {
     // Escape '<' to prevent database text from ending the inline script element.
-    const json = JSON.stringify({ tree: result.tree, legend: result.legend, areaMetric: result.areaMetric }).replaceAll('<', '\\u003c').replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029');
+    const json = JSON.stringify({ tree: result.tree, legend: result.legend, heat: result.heat, observedMax: result.observedMax, areaMetric: result.areaMetric }).replaceAll('<', '\\u003c').replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029');
     treeMapHtml = `<div class="code-view-treemap"></div><script>(${mountTreeMap.toString()})(document.currentScript.previousElementSibling,${json});</script>`;
   }
   return { treeMapHtml, treeMapWarningsHtml };

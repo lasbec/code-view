@@ -202,8 +202,22 @@ setInterval(async () => {
   try { await load(); if ((route() === 'treemap' && treeKey !== currentTreeKey()) || (['files', 'functions'].includes(route()) && listKey !== currentTreeKey())) render(); else updateProgress(); } catch (e) { notice(e); } finally { polling = false; }
 }, 1500);
 
-window.addEventListener('message', event => {
+window.addEventListener('message', async event => {
   const frame = document.querySelector('#map iframe');
+  if (frame && event.source === frame.contentWindow && event.data?.type === 'code-view-heat') {
+    const p = selectedPreset(), heat = event.data.heat, previousKey = currentTreeKey();
+    try {
+      if (!p || !heat || typeof heat !== 'object' || Array.isArray(heat) || Object.entries(heat).some(([key,value]) => !['min','yellowFrom','redFrom','max'].includes(key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Invalid heat thresholds.');
+      const saved = await api(`presets/${p.id}`, 'PUT', { ...p, config: { ...p.config, heat } });
+      const unchanged = currentTreeKey() === previousKey;
+      state.presets = state.presets.map(item => item.id === p.id ? saved : item);
+      if (unchanged && treeKey === previousKey) treeKey = currentTreeKey();
+      frame.contentWindow?.postMessage({ type: 'code-view-heat-result' }, '*');
+    } catch (error) {
+      frame.contentWindow?.postMessage({ type: 'code-view-heat-result', error: error.message }, '*');
+    }
+    return;
+  }
   if (event.source !== frame?.contentWindow || event.data?.type !== 'code-view-inspect' || !['file', 'function'].includes(event.data.kind) || typeof event.data.id !== 'string') return;
   const hash = detailHash(event.data.kind, event.data.id, { inspection: selectedInspection().id, preset: selectedPreset().id, showFunctions: String(showFunctions) });
   history.pushState({ inspector: true }, '', hash); render();
