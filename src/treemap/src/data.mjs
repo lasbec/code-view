@@ -1,5 +1,6 @@
 import initSqlJs from 'sql.js/dist/sql-asm-memory-growth.js';
 import { minimatch } from 'minimatch';
+import { normalizeAuthorEmail, normalizeAuthorIdentities } from './authors.mjs';
 
 let engine;
 const quote = name => `"${name.replaceAll('"', '""')}"`;
@@ -166,7 +167,9 @@ export async function calculateTreeMap(bytes, config, options = {}) {
   const diagnostics = [];
   let db;
   try {
-    keys(options, ['include', 'exclude', 'repository', 'codePrefix', 'since', 'until'], 'Optionen');
+    keys(options, ['include', 'exclude', 'repository', 'codePrefix', 'since', 'until', 'authorIdentities'], 'Optionen');
+    const identities = new Map(normalizeAuthorIdentities(options.authorIdentities).flatMap(identity =>
+      [identity.email, ...identity.aliases].map(email => [email, identity])));
     for (const name of ['include', 'exclude']) if (options[name] !== undefined && (!Array.isArray(options[name]) || options[name].some(p => typeof p !== 'string'))) fail(`${name} muss eine Liste von Glob-Mustern sein.`);
     if (!(bytes instanceof Uint8Array) && !(bytes instanceof ArrayBuffer)) fail('SQLite-Inhalt muss als Uint8Array oder ArrayBuffer übergeben werden.');
     if (!bytes.byteLength) fail('Die SQLite-Datei ist leer.');
@@ -180,17 +183,38 @@ export async function calculateTreeMap(bytes, config, options = {}) {
     const byPath = new Map(files.map(f => [f.path, f]));
     // Count each commit once, even if a change table contains repeated paths.
     const authorColumns = changes ? new Set(rows(db, 'PRAGMA table_info(git_commits)').map(c => c.name)) : new Set();
-    const hasAuthors = authorColumns.has('author_name') && authorColumns.has('author_email');
-    for (const file of files) file.topAuthors = hasAuthors ? [] : null;
+    const hasAuthors = ['author_name', 'author_email', 'is_merge'].every(name => authorColumns.has(name));
+    for (const file of files) {
+      file.topAuthors = hasAuthors ? [] : null;
+      file.topMergeAuthors = hasAuthors ? [] : null;
+    }
     if (hasAuthors) {
       const authors = rows(db, `SELECT ch.path, c.author_email AS email,
-        MIN(c.author_name) AS name, COUNT(DISTINCT c.hash) AS commits
+        MIN(c.author_name) AS name,
+        COUNT(DISTINCT CASE WHEN c.is_merge=0 THEN c.hash END) AS commits,
+        COUNT(DISTINCT CASE WHEN c.is_merge=1 THEN c.hash END) AS merges
         FROM ${changes} ch JOIN git_commits c ON c.repository_id=ch.repository_id AND c.hash=ch.commit_hash
-        GROUP BY ch.path, c.author_email
-        ORDER BY ch.path, commits DESC, email COLLATE BINARY`, params);
+        GROUP BY ch.path, c.author_email`, params);
+      const byFile = new Map();
       for (const author of authors) {
         const file = byPath.get(normalizePath(author.path));
-        if (file && file.topAuthors.length < 2) file.topAuthors.push({ name: author.name, email: author.email, commits: author.commits });
+        if (!file) continue;
+        const email = normalizeAuthorEmail(author.email ?? '');
+        const identity = identities.get(email) ?? { name: author.name, email };
+        if (!byFile.has(file)) byFile.set(file, new Map());
+        const combined = byFile.get(file), key = identity.email || identity.name;
+        if (!combined.has(key)) combined.set(key, { name: identity.name, email: identity.email, commits: 0, merges: 0 });
+        const entry = combined.get(key);
+        if (identity.name < entry.name) entry.name = identity.name;
+        entry.commits += author.commits;
+        entry.merges += author.merges;
+      }
+      for (const [file, combined] of byFile) {
+        for (const [field, count] of [['topAuthors', 'commits'], ['topMergeAuthors', 'merges']]) {
+          file[field] = [...combined.values()].filter(a => a[count] > 0)
+            .sort((a, b) => b[count] - a[count] || (a.email < b.email ? -1 : a.email > b.email ? 1 : 0))
+            .slice(0, 2).map(a => ({ name: a.name, email: a.email, [count]: a[count] }));
+        }
       }
     }
     for (const metric of needed) {

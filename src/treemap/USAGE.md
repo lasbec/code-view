@@ -88,7 +88,7 @@ const { treeMapHtml, treeMapWarningsHtml } = renderTreeMap(result);
 ```
 
 Input is a `Uint8Array` or `ArrayBuffer`, never a filesystem path. Options also
-accept `repository`, `codePrefix`, `since`, `until`. Results contain `ok`, files,
+accept `repository`, `codePrefix`, `since`, `until`, `authorIdentities`. Results contain `ok`, files,
 hierarchy, legend and structured diagnostics. CLI and API use the same functions
 and produce identical snippets. `listMetrics(bytes, options)` lists metrics.
 
@@ -98,11 +98,31 @@ Insert snippets through HTML parsing that executes their inline script, for
 example server-rendered markup. Assigning `innerHTML` alone does not execute it.
 Multiple snippets can coexist; each treemap isolates its styles in a shadow root.
 
-File details show the two authors with the most distinct commits touching the
-current file path. Identity uses the stored author email; name variants for the
-same email are combined and a deterministic name is displayed. Counts use the
-selected repository and the same since/until filters as Git metrics. Equal counts
-are ordered by email. Counts cover stored history, do not follow historical
-renames, and do not represent line ownership. Older databases without author
-columns show an unavailable-data message. A clicked file stays selected while
-moving the pointer; click another file to change it.
+File details show two separate rankings for the current file path: `topAuthors`
+contains the two authors with the most distinct non-merge commits, with `commits`
+counts; `topMergeAuthors` contains the two authors with the most distinct merge
+commits, with `merges` counts. Merges include branch integrations and possible
+conflict resolutions, so a merge count does not prove an author edited the file.
+Existing Git score metrics continue to include merges.
+
+Identity uses trimmed, case-insensitive email addresses. Name variants for the
+same email are combined and a deterministic name is displayed. To combine known
+email aliases, provide `authorIdentities` in the JavaScript options:
+
+```js
+const options = { authorIdentities: [
+  { name: 'Alice Example', email: 'alice@work.test', aliases: ['alice@private.test'] }
+] };
+```
+
+For the CLI, save the array to a JSON file and pass `--author-identities identities.json`.
+Aliases apply before ranking; overlapping mappings are errors. Matching names
+alone never combine different email addresses. The local server stores identities
+in the repository's inspection configuration and applies them across its presets.
+
+Both rankings use the selected repository and the same since/until filters as Git
+metrics. Equal counts are ordered by email. Counts cover stored history, do not
+follow historical renames, and do not represent line ownership. Older databases
+without author columns show an unavailable-data message. No reinspection is
+needed. A clicked file stays selected while moving the pointer; click another file
+to change it.

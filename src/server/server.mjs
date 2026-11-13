@@ -74,7 +74,7 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         const p = state.presets.find(c => c.id === url.searchParams.get('preset'));
         check(c && p, 'Choose an inspection and treemap configuration.');
         check(usable(jobs.path(c.id)), 'Start inspection to generate results.');
-        return send(await render(jobs.path(c.id), p));
+        return send(await render(jobs.path(c.id), { ...p, options: { ...p.options, authorIdentities: c.authorIdentities ?? [] } }));
       }
       const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
       if (req.method === 'GET' && assets[url.pathname]) { const [file, type] = assets[url.pathname]; return send(await readFile(new URL(`./public/${file}`, import.meta.url), 'utf8'), 200, type); }

@@ -17,6 +17,10 @@ The three navigation entries provide:
 - Inspection configuration: named local repositories, relative tsconfig paths,
   code include/exclude patterns, and an optional commit limit. Empty means all
   reachable history. Choose a repository root with a checked-out branch.
+  Author identities combine a person's primary and additional email addresses
+  across all presets for that repository. Identity changes apply to saved results
+  without another inspection. Emails are trimmed and matched case-insensitively;
+  overlapping identities are rejected. Names alone never combine different emails.
 - Treemap: independent inspection and global treemap preset selectors, manual
   inspection, progress/output, cancellation, and an expandable warnings section.
   Both inspectors have their own progress bar with exact processed/total counts.
@@ -64,5 +68,8 @@ On desktop, the Treemap view fits the available viewport height. The map grows
 between the compact configuration bar and status footer; file details use a
 horizontal grid. Expanded warnings and unusually large detail sets can scroll
 within their panels. Small screens retain page scrolling for usable controls.
-The two most frequent Git authors per file are calculated from the existing
-SQLite data, so no new inspection is needed to display them.
+File details show separate top-two lists for authors of non-merge commits and
+authors of merge commits, calculated from the existing SQLite data. Merge counts
+include branch integrations and possible conflict resolutions; they do not prove
+that the merge author edited the file. Existing Git score metrics still include
+merges. No new inspection is needed for these lists or identity changes.

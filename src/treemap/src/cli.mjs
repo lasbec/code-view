@@ -15,10 +15,11 @@ export async function main(args = process.argv.slice(2)) {
     config: { type: 'string' }, 'config-json': { type: 'string' },
     include: { type: 'string', multiple: true }, exclude: { type: 'string', multiple: true },
     repository: { type: 'string' }, 'code-prefix': { type: 'string' }, since: { type: 'string' }, until: { type: 'string' },
+    'author-identities': { type: 'string' },
     'list-metrics': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
   } });
   if (values.help) {
-    console.log('Usage: node src/cli.mjs --input analysis.sqlite --output report.html --config scores.json\nAlternative: --config-json \'{"scores":[{"metrics":[{"metric":"code.function_count"}]}]}\'\nOptional: --include GLOB --exclude GLOB (repeatable), --repository PATH_OR_ID, --code-prefix PATH, --since ISO_DATE, --until ISO_DATE\nList metrics: --input analysis.sqlite --list-metrics\nWrites the treemap and derived report.warnings.html snippets.');
+    console.log('Usage: node src/cli.mjs --input analysis.sqlite --output report.html --config scores.json\nAlternative: --config-json \'{"scores":[{"metrics":[{"metric":"code.function_count"}]}]}\'\nOptional: --include GLOB --exclude GLOB (repeatable), --repository PATH_OR_ID, --code-prefix PATH, --since ISO_DATE, --until ISO_DATE, --author-identities identities.json\nList metrics: --input analysis.sqlite --list-metrics\nWrites the treemap and derived report.warnings.html snippets.');
     return { ok: true };
   }
   if (!values.input) throw new Error('--input ist erforderlich.');
@@ -40,12 +41,13 @@ export async function main(args = process.argv.slice(2)) {
       return parent === file ? file : path.join(await canonical(parent), path.basename(file));
     }
   };
-  const protectedPaths = await Promise.all([values.input, ...(values.config ? [values.config] : [])].map(file => canonical(path.resolve(file))));
+  const protectedPaths = await Promise.all([values.input, values.config, values['author-identities']].filter(Boolean).map(file => canonical(path.resolve(file))));
   for (const file of [output, warnings]) if (protectedPaths.includes(await canonical(file))) throw new Error('Ausgabepfade dürfen Eingabedatei und Konfiguration nicht überschreiben.');
   let result;
   try {
     if (Boolean(values.config) === Boolean(values['config-json'])) throw new Error('Genau eine Option --config oder --config-json angeben.');
     const config = JSON.parse(values.config ? await readFile(values.config, 'utf8') : values['config-json']);
+    if (values['author-identities']) options.authorIdentities = JSON.parse(await readFile(values['author-identities'], 'utf8'));
     result = await calculateTreeMap(await readFile(values.input), config, options);
   } catch (error) {
     result = { ok: false, diagnostics: [{ severity: 'error', code: 'input-failed', message: `Treemap konnte nicht erstellt werden: ${error.message}` }] };

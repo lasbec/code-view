@@ -49,17 +49,22 @@ export function mountTreeMap(host, model) {
     }
     summary.append(values); grid.append(summary);
     if (!node.children) {
-      const authors = element('section'); authors.append(element('h3', 'Häufigste Autoren · Commits'));
-      if (node.topAuthors?.length) {
-        const list = element('dl');
-        for (const author of node.topAuthors) {
-          const name = element('dt', author.name || author.email || 'Unbekannt'); name.title = author.email || '';
-          list.append(name, element('dd', String(author.commits)));
-        }
-        authors.append(list);
-      } else authors.append(element('p', node.topAuthors == null ? 'Keine Git-Autorendaten verfügbar.' : 'Keine passenden Commits für diesen Dateipfad in der gespeicherten Historie.'));
-      authors.append(element('small', 'Aus der gespeicherten, gefilterten Git-Historie.'));
-      grid.append(authors);
+      for (const [field, count, title, hint] of [
+        ['topAuthors', 'commits', 'Häufigste Autoren · Änderungscommits', 'Ohne Merges. Aus der gespeicherten, gefilterten Git-Historie.'],
+        ['topMergeAuthors', 'merges', 'Häufigste Merge-Autoren · Merges', 'Übernahmen und mögliche Konfliktlösungen; kein Nachweis eigener Änderungen.'],
+      ]) {
+        const authors = element('section'); authors.append(element('h3', title));
+        if (node[field]?.length) {
+          const list = element('dl');
+          for (const author of node[field]) {
+            const name = element('dt', author.name || author.email || 'Unbekannt'); name.title = author.email || '';
+            list.append(name, element('dd', String(author[count])));
+          }
+          authors.append(list);
+        } else authors.append(element('p', node[field] == null ? 'Keine Git-Autorendaten verfügbar.' : 'Keine passenden Commits für diesen Dateipfad in der gespeicherten Historie.'));
+        authors.append(element('small', hint));
+        grid.append(authors);
+      }
       for (const score of node.scores) {
         const section = element('section'); section.append(element('h3', `${score.name}: ${score.value}`));
         const table = element('table');

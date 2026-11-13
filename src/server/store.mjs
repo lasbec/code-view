@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { resolve, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { normalizeAuthorIdentities } from '../treemap/src/authors.mjs';
 
 export const defaultPreset = () => ({ name: 'Complexity', config: { area: 'code_files.size_bytes', scores: [{ name: 'Complexity', metrics: [{ metric: 'code_functions.cyclomatic_complexity', factor: 1 }] }] }, options: { include: [], exclude: [] } });
 export function check(condition, message) { if (!condition) throw Object.assign(new Error(message), { status: 400 }); }
@@ -15,7 +16,10 @@ export function validateInspection(value) {
   const repository = resolve(value.repository), tsconfig = relative(repository, resolve(repository, value.tsconfig));
   check(tsconfig && tsconfig !== '..' && !tsconfig.startsWith(`..${sep}`), 'tsconfig must stay inside the repository.');
   check(value.commits == null || Number.isSafeInteger(value.commits) && value.commits > 0, 'Commit limit must be a positive integer or empty for all history.');
-  return { name: value.name.trim(), repository, tsconfig, commits: value.commits ?? null, include: patterns(value.include), exclude: patterns(value.exclude) };
+  let authorIdentities;
+  try { authorIdentities = normalizeAuthorIdentities(value.authorIdentities); }
+  catch (error) { check(false, error.message); }
+  return { name: value.name.trim(), repository, tsconfig, commits: value.commits ?? null, include: patterns(value.include), exclude: patterns(value.exclude), authorIdentities };
 }
 export function validatePreset(value) {
   check(object(value) && typeof value.name === 'string' && value.name.trim(), 'A preset name is required.');

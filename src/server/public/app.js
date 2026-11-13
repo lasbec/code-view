@@ -20,6 +20,9 @@ const heading = (title, text) => `<div class="page-heading"><h1>${title}</h1><p 
 const input = (label, name, value, extra = '') => `<label>${label}<input name="${name}" value="${esc(value)}" ${extra}></label>`;
 const patterns = (label, name, values = []) => `<label>${label}<textarea name="${name}" placeholder="One pattern per line">${esc(values.join('\n'))}</textarea></label>`;
 function selection(collection, id, label, key) { return `<label>${label}<select data-select="${key}">${options(collection, id)}</select></label>`; }
+function authorIdentityHtml(identity = {}) {
+  return `<div class="row author-identity">${input('Name', 'author-name', identity.name, 'required')}${input('Primary email', 'author-email', identity.email, 'type="email" required')}${input('Other emails, separated by commas', 'author-aliases', (identity.aliases ?? []).join(', '))}<button type="button" data-action="remove-author">Remove author</button></div>`;
+}
 function render() {
   const outputOpen = document.querySelector('#job details')?.open ?? false;
   document.body.classList.toggle('treemap-page', route() === 'treemap');
@@ -43,6 +46,7 @@ function inspectionView() {
     ${input('Configuration name', 'name', c.name, 'required')}${input('Repository directory', 'repository', c.repository, 'required placeholder="/home/you/projects/application"')}
     <p class="hint">Use the repository root. Inspection reads current files and the current branch history.</p><div class="row">${input('TypeScript configuration', 'tsconfig', c.tsconfig, 'required')}${input('Git commit limit', 'commits', c.commits, 'type="number" min="1" step="1" placeholder="All history"')}</div>
     <div class="row">${patterns('Include code paths', 'include', c.include)}${patterns('Exclude code paths', 'exclude', c.exclude)}</div><p class="hint">Code patterns are relative to the TypeScript configuration directory. Empty filters include all project files.</p>
+    <fieldset><legend>Author identities</legend><p class="hint">Combine known email addresses for the same person. Applies to all treemap presets for this repository without another inspection.</p><div id="author-identities">${(c.authorIdentities ?? []).map(authorIdentityHtml).join('')}</div><button type="button" data-action="add-author">Add author identity</button></fieldset>
     <div class="actions"><button class="primary" type="submit">Save configuration</button>${c.id ? '<button type="button" data-action="delete-inspection" class="danger">Delete</button>' : ''}</div></fieldset><p data-busy-hint ${busy ? '' : 'hidden'}>Inspection is running. Cancel it or wait before editing.</p></form>`;
 }
 function metricInput(label, name, value) { return input(label, name, value, 'list="metric-catalog" required'); }
@@ -100,7 +104,7 @@ function treemapView() {
   else { document.querySelector('#map').innerHTML = '<p class="muted">Calculating treemap…</p>'; drawMap(c, p, requestNumber); }
   treeKey = currentTreeKey();
 }
-function currentTreeKey() { return JSON.stringify([state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedPreset()]); }
+function currentTreeKey() { return JSON.stringify([state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset()]); }
 async function drawMap(c, p, number) {
   try {
     const result = await api(`treemap?inspection=${encodeURIComponent(c.id)}&preset=${encodeURIComponent(p.id)}`);
@@ -127,7 +131,12 @@ view.addEventListener('submit', async event => {
   const form = event.target, data = new FormData(form), id = form.dataset.id;
   let value, collection;
   if (form.id === 'inspection-form') {
-    collection = 'inspections'; value = { name: data.get('name'), repository: data.get('repository'), tsconfig: data.get('tsconfig'), commits: data.get('commits') === '' ? null : Number(data.get('commits')), include: lines(data.get('include')), exclude: lines(data.get('exclude')) };
+    const authorIdentities = [...form.querySelectorAll('.author-identity')].map(row => ({
+      name: row.querySelector('[name="author-name"]').value,
+      email: row.querySelector('[name="author-email"]').value,
+      aliases: row.querySelector('[name="author-aliases"]').value.split(',').map(email => email.trim()).filter(Boolean),
+    }));
+    collection = 'inspections'; value = { name: data.get('name'), repository: data.get('repository'), tsconfig: data.get('tsconfig'), commits: data.get('commits') === '' ? null : Number(data.get('commits')), include: lines(data.get('include')), exclude: lines(data.get('exclude')), authorIdentities };
   } else {
     collection = 'presets';
     const scores = [...form.querySelectorAll('.score')].map(s => ({ name: s.querySelector('[name="score-name"]').value, metrics: [...s.querySelectorAll('.term')].map(t => {
@@ -146,6 +155,8 @@ document.addEventListener('click', async event => {
   const action = button.dataset.action; notice(null);
   try {
     if (action === 'new-inspection') { newInspection = true; render(); return; }
+    if (action === 'add-author') { document.querySelector('#author-identities').insertAdjacentHTML('beforeend', authorIdentityHtml()); return; }
+    if (action === 'remove-author') { button.closest('.author-identity').remove(); return; }
     if (action === 'new-preset') { newPreset = true; render(); return; }
     if (action === 'add-score') { if (view.querySelectorAll('.score').length < 3) document.querySelector('#scores').insertAdjacentHTML('beforeend', scoreHtml()); return; }
     if (action === 'remove-score') { if (view.querySelectorAll('.score').length > 1) button.closest('.score').remove(); return; }

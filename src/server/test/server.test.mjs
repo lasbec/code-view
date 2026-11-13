@@ -15,6 +15,19 @@ test('validates repository boundaries, commit limits and treemap thresholds', ()
   assert.equal(validateInspection(c).commits, null);
   assert.throws(() => validatePreset({ ...defaultPreset(), config: { ...defaultPreset().config, heat: { min: 20, max: 10 } } }));
 });
+test('author identities normalize emails and reject ambiguous or malformed mappings', () => {
+  const c = { name: 'test', repository: '/tmp/repo', tsconfig: 'tsconfig.json' };
+  assert.deepEqual(validateInspection(c).authorIdentities, []);
+  assert.deepEqual(validateInspection({ ...c, authorIdentities: [
+    { name: ' Alice ', email: ' ALICE@WORK.TEST ', aliases: ['Alice@Private.Test'] },
+  ] }).authorIdentities, [{ name: 'Alice', email: 'alice@work.test', aliases: ['alice@private.test'] }]);
+  for (const authorIdentities of [null, {}, [{ name: '', email: 'a@b.test' }],
+    [{ name: 'A', email: 'invalid' }], [{ name: 'A', email: 'a@b.test', aliases: 'alias@b.test' }],
+    [{ name: 'A', email: 'a@b.test', aliases: ['invalid'] }],
+    [{ name: 'A', email: 'a@b.test', extra: true }],
+    [{ name: 'A', email: 'a@b.test', aliases: ['alias@b.test'] }, { name: 'B', email: 'ALIAS@B.TEST' }],
+  ]) assert.throws(() => validateInspection({ ...c, authorIdentities }), error => error.status === 400);
+});
 test('serialized storage survives restart without losing concurrent changes', async t => {
   const dir = await temporary(t), store = await openStore(dir);
   await Promise.all([store.update(s => { s.selection.inspection = 'first'; }), store.update(s => { s.selection.preset = 'second'; })]);
@@ -57,6 +70,14 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal(rendered.value.ok, true, JSON.stringify(rendered.value));
   assert.match(rendered.value.treeMapHtml, /example.ts/);
   assert.ok(rendered.value.treeMapWarningsHtml);
+  const authorIdentities = [{ name: 'Canonical Test', email: 'canonical@example.test', aliases: ['test@example.test'] }];
+  assert.equal((await call(`inspections/${inspection.id}`, 'PUT', { ...config, authorIdentities })).status, 200);
+  const updated = (await call('state')).value.inspections[0];
+  assert.equal(updated.stale, false, 'Changing author identities does not require another inspection.');
+  assert.deepEqual((await openStore(data)).get().inspections[0].authorIdentities, authorIdentities);
+  const renamed = await call(`treemap?inspection=${inspection.id}&preset=${state.presets[0].id}`);
+  assert.equal(renamed.value.ok, true);
+  assert.match(renamed.value.treeMapHtml, /"name":"Canonical Test","email":"canonical@example.test","commits":1/);
   const before = await readFile(app.jobs.path(inspection.id));
   // A bad rerun must never publish a partial database over usable results.
   await call(`inspections/${inspection.id}`, 'PUT', { ...config, tsconfig: 'missing.json' });

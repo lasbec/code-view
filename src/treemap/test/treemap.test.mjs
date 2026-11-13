@@ -204,7 +204,10 @@ test('file authors count distinct commits, respect repository/date mapping, and 
   const bytes = readFileSync(input), result = await calculateTreeMap(bytes, config);
   assert.equal(result.ok, true);
   assert.deepEqual(result.files.find(f => f.path.endsWith('/a.ts')).topAuthors, [
-    { name: 'Alice', email: 'alice@example.test', commits: 2 }, { name: 'Bob', email: 'bob@example.test', commits: 1 },
+    { name: 'Alice', email: 'alice@example.test', commits: 2 }, { name: '<img src=x onerror=alert(1)>', email: 'third@example.test', commits: 1 },
+  ]);
+  assert.deepEqual(result.files.find(f => f.path.endsWith('/a.ts')).topMergeAuthors, [
+    { name: 'Bob', email: 'bob@example.test', merges: 1 },
   ]);
   const filtered = await calculateTreeMap(bytes, config, { since: '2026-03-15', until: '2026-05-01' });
   assert.deepEqual(filtered.files.find(f => f.path.endsWith('/a.ts')).topAuthors, [{name:'<img src=x onerror=alert(1)>',email:'third@example.test',commits:1}]);
@@ -228,6 +231,7 @@ test('older databases without author metadata remain usable', async t => {
   const result = await calculateTreeMap(bytes, config);
   assert.equal(result.ok, true);
   assert.ok(result.files.every(file => file.topAuthors === null));
+  assert.ok(result.files.every(file => file.topMergeAuthors === null));
 });
 
 test('repository-root tsconfig maps authors and Git metrics without requiring a date filter', async t => {
@@ -242,8 +246,89 @@ test('repository-root tsconfig maps authors and Git metrics without requiring a 
   assert.equal(result.ok, true);
   const file = result.files.find(file => file.path === 'src/a.ts');
   assert.ok(file, 'A repository-relative path must not acquire a leading slash.');
-  assert.deepEqual(file.topAuthors, [{ name:'Alice', email:'alice@example.test', commits:2 }]);
+  assert.deepEqual(file.topAuthors, [{ name:'Alice', email:'alice@example.test', commits:1 }]);
+  assert.deepEqual(file.topMergeAuthors, [{ name:'Alice', email:'alice@example.test', merges:1 }]);
   assert.equal(file.metrics['git.change_count'], 2);
   const filtered = await calculateTreeMap(readFileSync(input), config, { exclude: ['/src/b.ts'] });
   assert.ok(!filtered.files.some(file => file.path === 'src/b.ts'));
+});
+
+test('repeated merges do not displace code authors and explicit identities combine email aliases', async t => {
+  const { input } = fixture(t), db = new DatabaseSync(input);
+  db.exec(`ALTER TABLE git_commits ADD COLUMN author_name TEXT;
+    ALTER TABLE git_commits ADD COLUMN author_email TEXT;
+    UPDATE git_commits SET author_name='TN', author_email='thomas@example.test' WHERE hash='a';
+    UPDATE git_commits SET author_name='Patry', author_email='patry@work.test' WHERE hash='b';
+    INSERT INTO git_commits VALUES
+      (1,'c','2026-03-01T00:00:00Z',0,'TN','thomas@example.test'),
+      (1,'m2','2026-03-02T00:00:00Z',1,'Patry','patry@work.test'),
+      (1,'m3','2026-03-03T00:00:00Z',1,'Patry','patry@work.test'),
+      (1,'m4','2026-03-04T00:00:00Z',1,'Patrycja Kupiec','patry@private.test'),
+      (1,'m5','2026-03-05T00:00:00Z',1,'Patrycja Kupiec','patry@private.test'),
+      (1,'m6','2026-03-06T00:00:00Z',1,'Patrycja Kupiec','patry@private.test');
+    INSERT INTO git_file_changes SELECT 1,hash,10,'packages/app/src/a.ts',NULL
+      FROM git_commits WHERE repository_id=1 AND hash NOT IN ('a','b');
+    INSERT INTO git_file_changes VALUES (1,'m6',11,'packages/app/src/a.ts',NULL);`);
+  db.close();
+  const bytes = readFileSync(input);
+  const authorIdentities = [{ name: 'Patrycja Kupiec', email: 'patry@work.test', aliases: ['patry@private.test'] }];
+  const result = await calculateTreeMap(bytes, config, { authorIdentities });
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  const file = result.files.find(f => f.path.endsWith('/a.ts'));
+  assert.deepEqual(file.topAuthors, [{ name: 'TN', email: 'thomas@example.test', commits: 2 }]);
+  assert.deepEqual(file.topMergeAuthors, [{ name: 'Patrycja Kupiec', email: 'patry@work.test', merges: 6 }]);
+  assert.equal(file.metrics['git.change_count'], 9, 'Existing metrics still include all change rows.');
+  const filtered = await calculateTreeMap(bytes, config, { authorIdentities, since: '2026-03-04', until: '2026-03-06' });
+  const filteredFile = filtered.files.find(f => f.path.endsWith('/a.ts'));
+  assert.deepEqual(filteredFile.topAuthors, []);
+  assert.deepEqual(filteredFile.topMergeAuthors, [{ name: 'Patrycja Kupiec', email: 'patry@work.test', merges: 3 }]);
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM(renderTreeMap(result).treeMapHtml, { runScripts: 'dangerously' });
+  t.after(() => dom.window.close());
+  const shadow = dom.window.document.querySelector('.code-view-treemap').shadowRoot;
+  [...shadow.querySelectorAll('.tile')].find(tile => tile.textContent === 'a.ts').click();
+  const sections = [...shadow.querySelectorAll('.detail section')];
+  const changes = sections.find(s => s.querySelector('h3')?.textContent.includes('Änderungscommits'));
+  const merges = sections.find(s => s.querySelector('h3')?.textContent.includes('Merge-Autoren'));
+  assert.match(changes.textContent, /TN2/);
+  assert.doesNotMatch(changes.textContent, /Patry/);
+  assert.match(merges.textContent, /Patrycja Kupiec6/);
+});
+
+test('author aliases combine regular commits without merging unrelated authors with the same name', async t => {
+  const { input } = fixture(t), db = new DatabaseSync(input);
+  db.exec(`ALTER TABLE git_commits ADD COLUMN author_name TEXT;
+    ALTER TABLE git_commits ADD COLUMN author_email TEXT;
+    UPDATE git_commits SET author_name='Alice',author_email='alice@work.test';
+    INSERT INTO git_commits VALUES
+      (1,'c','2026-03-01T00:00:00Z',0,'Alice',' ALICE@PRIVATE.TEST '),
+      (1,'d','2026-03-02T00:00:00Z',0,'Alice','unrelated@example.test');
+    INSERT INTO git_file_changes VALUES (1,'c',0,'packages/app/src/a.ts',NULL),
+      (1,'d',0,'packages/app/src/a.ts',NULL);`);
+  db.close();
+  const result = await calculateTreeMap(readFileSync(input), config, {
+    authorIdentities: [{ name: 'Alice Example', email: 'alice@work.test', aliases: ['alice@private.test'] }],
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.files.find(f => f.path.endsWith('/a.ts')).topAuthors, [
+    { name: 'Alice Example', email: 'alice@work.test', commits: 2 },
+    { name: 'Alice', email: 'unrelated@example.test', commits: 1 },
+  ]);
+  const identities = path.join(path.dirname(input), 'identities.json');
+  const output = path.join(path.dirname(input), 'authors.html');
+  writeFileSync(identities, JSON.stringify([{ name: 'Alice Example', email: 'alice@work.test', aliases: ['alice@private.test'] }]));
+  const cli = await main(['--input', input, '--output', output, '--config-json', JSON.stringify(config), '--author-identities', identities]);
+  assert.equal(cli.ok, true);
+  assert.equal(readFileSync(output, 'utf8'), renderTreeMap(result).treeMapHtml);
+  await assert.rejects(main(['--input', input, '--output', identities, '--config-json', JSON.stringify(config), '--author-identities', identities]), /nicht überschreiben/);
+});
+
+test('ambiguous author identities fail rather than silently misattribute commits', async t => {
+  const { bytes } = fixture(t);
+  const result = await calculateTreeMap(bytes, config, { authorIdentities: [
+    { name: 'Alice', email: 'alice@work.test', aliases: ['alias@work.test'] },
+    { name: 'Bob', email: 'ALIAS@WORK.TEST' },
+  ] });
+  assert.equal(result.ok, false);
+  assert.match(result.diagnostics[0].message, /belongs to more than one entry/);
 });
