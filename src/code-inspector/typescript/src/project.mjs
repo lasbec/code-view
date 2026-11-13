@@ -12,9 +12,14 @@ export function loadProject(configPath, includes = [], excludes = []) {
     const read = ts.readConfigFile(config, ts.sys.readFile);
     if (read.error) throw new Error(ts.flattenDiagnosticMessageText(read.error.messageText, '\n'));
     const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, path.dirname(config), undefined, config);
-    if (parsed.errors.length) throw new Error(ts.formatDiagnosticsWithColorAndContext(parsed.errors, {
+    const errors = parsed.errors.filter(d => !(config !== configPath && d.code === 18003));
+    if (errors.length) throw new Error(ts.formatDiagnosticsWithColorAndContext(errors, {
       getCanonicalFileName: x => x, getCurrentDirectory: ts.sys.getCurrentDirectory, getNewLine: () => '\n',
     }));
+    for (const d of parsed.errors.filter(d => d.code === 18003)) diagnostics.push({
+      file: slash(path.relative(base, config)), line: null, code: d.code,
+      message: ts.flattenDiagnosticMessageText(d.messageText, '\n'),
+    });
     const program = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, projectReferences: parsed.projectReferences });
     const syntax = program.getSyntacticDiagnostics();
     if (syntax.length) throw new Error(ts.formatDiagnostics(syntax, {

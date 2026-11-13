@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { main } from '../src/main.mjs';
+import { loadProject } from '../src/project.mjs';
 function fixture(t, files) {
  const dir = mkdtempSync(path.join(tmpdir(), 'ts-inspector-'));
  t.after(() => rmSync(dir, {recursive:true,force:true}));
@@ -117,6 +118,27 @@ test('recursive project references and extended config are loaded',t=>{
  writeFileSync(path.join(dir,'lib.json'),JSON.stringify({extends:'./base.json',compilerOptions:{composite:true},files:['a.ts']}));
  writeFileSync(path.join(dir,'tsconfig.json'),JSON.stringify({files:[],references:[{path:'./lib.json'}]}));
  const r=main(args);assert.equal(r.files.length,1);assert.equal(r.functions[0].name,'a');
+});
+test('empty referenced configs warn while application files are analyzed',t=>{
+ const {dir,args}=fixture(t,{'a.ts':'export function a(){}','.eslintrc.js':'module.exports = {};'});
+ writeFileSync(path.join(dir,'tsconfig.node.json'),JSON.stringify({compilerOptions:{composite:true},include:['vite.config.js','.eslintrc.js']}));
+ writeFileSync(path.join(dir,'tsconfig.json'),JSON.stringify({include:['a.ts'],references:[{path:'./tsconfig.node.json'}]}));
+ const warnings=[];t.mock.method(console,'error',message=>warnings.push(message));
+ const r=main(args);
+ assert.deepEqual(r.files.map(f=>f.id),['a.ts']);
+ assert.ok(r.functions.some(f=>f.name==='a'));
+ assert.ok(r.diagnostics.some(d=>d.code===18003&&d.file==='tsconfig.node.json'));
+ assert.ok(warnings.some(w=>/Warning.*tsconfig.node.json.*No inputs/.test(w)));
+ const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
+ assert.equal(db.prepare('SELECT file FROM code_diagnostics WHERE code=18003').get().file,'tsconfig.node.json');
+});
+test('empty root configs and other referenced config errors still fail',t=>{
+ const {dir}=fixture(t,{}),config=path.join(dir,'tsconfig.json');
+ assert.throws(()=>loadProject(config),/TS18003/);
+ writeFileSync(path.join(dir,'a.ts'),'export function a(){}');
+ writeFileSync(config,JSON.stringify({include:['a.ts'],references:[{path:'./bad.json'}]}));
+ writeFileSync(path.join(dir,'bad.json'),JSON.stringify({compilerOptions:{unknownOption:true},include:['missing.ts']}));
+ assert.throws(()=>loadProject(config),/unknownOption/);
 });
 test('rebuilding replaces stored results even without source changes',t=>{
  const {dir,args}=fixture(t,{'a.ts':'export function a(){return 1;}'});

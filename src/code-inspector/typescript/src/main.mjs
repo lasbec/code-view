@@ -20,6 +20,9 @@ export function main(args = process.argv.slice(2)) {
   const progress = progressReporter(values.progress);
   progress('preparing');
   const project = loadProject(values.tsconfig, values.include ?? [], values.exclude ?? []);
+  for (const d of project.diagnostics.filter(d => d.code === 18003)) {
+    console.error(`Warning: ${d.file}: ${d.message}`);
+  }
   const total = project.files.length;
   let completed = 0;
   progress('preparing', 0, total, 'Preparing dependency fingerprints');

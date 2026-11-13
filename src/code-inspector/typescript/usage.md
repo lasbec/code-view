@@ -45,6 +45,9 @@ Filters define the complete new result set; previous results outside the selecti
 Other database objects are preserved. Both inspectors can use the same SQLite file.
 The rebuild uses one transaction; errors or interruption preserve previous results.
 Syntax and configuration errors abort before writing.
+An empty referenced project (TS18003) emits a warning and is recorded in
+`code_diagnostics`; analysis continues for the remaining projects.
+An empty main configuration and other configuration errors still abort.
 Foreign-key violations anywhere in the database prevent the commit.
 Other writers are blocked during writing; a failed first run may leave an empty file.
 Exit code `0` means success or help; `1` means an error. Runs are neither continuous nor incremental.
