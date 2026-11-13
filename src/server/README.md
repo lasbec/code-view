@@ -12,7 +12,7 @@ Open http://127.0.0.1:3210. The server itself uses Node built-ins and needs no
 additional npm installation. Requires Node >=22.13, Python >=3.10, and Git >=2.38
 on PATH. Use `git --version` to check the Git binary that the server will run.
 
-The three navigation entries provide:
+The four navigation entries provide:
 
 - Inspection configuration: named local repositories, relative tsconfig paths,
   code include/exclude patterns, and an optional commit limit. Empty means all
@@ -35,6 +35,12 @@ The three navigation entries provide:
   weighted score groups, heat thresholds, path filters and Git history dates.
   Metric fields offer suggestions from the last displayed database and also
   accept metric names supported by the existing treemap API.
+- Help: a searchable reference for all selectable metrics, including aliases,
+  with compact rows showing each short description once. Calculation rules and
+  examples expand side by side on desktop and stack on small screens. The
+  general introduction is collapsed by default. Explains
+  per-file aggregation, score weights and thresholds, source-analysis limits,
+  and Git history scope. Available before the first inspection.
 
 Code filters use paths relative to the tsconfig directory. Treemap filters use
 paths relative to the repository root. Code inspection reads working-tree files,

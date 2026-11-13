@@ -1,4 +1,5 @@
 import { progressHtml } from './progress-view.js';
+import { metricHelpHtml, filterMetricHelp } from './metric-help.js';
 const view = document.querySelector('#view');
 let state, metrics = [], newInspection = false, newPreset = false, treeKey = '', requestNumber = 0;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -30,6 +31,7 @@ function render() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.hash === `#${route()}`));
   if (route() === 'inspections') inspectionView();
   else if (route() === 'presets') presetView();
+  else if (route() === 'help') view.innerHTML = metricHelpHtml(metrics);
   else treemapView();
   const toolbar = view.querySelector('.toolbar');
   document.querySelector('#configuration-bar').replaceChildren(...(toolbar ? [toolbar] : []));
@@ -64,6 +66,7 @@ function presetView() {
     `<div class="card toolbar">${selection(state.presets, p.id, 'Saved treemap configuration', 'preset')}<button data-action="new-preset">New preset</button><button data-action="duplicate-preset" ${p.id ? '' : 'disabled'}>Duplicate</button></div>
     <datalist id="metric-catalog">${names.map(m => `<option value="${esc(m)}"></option>`).join('')}</datalist>
     <form id="preset-form" class="card" data-id="${esc(p.id)}"><div class="row">${input('Preset name', 'name', p.name, 'required')}${metricInput('Rectangle area metric', 'area', p.config.area)}</div>
+    <p class="hint"><a href="#help">Metric help: descriptions, calculation rules and examples</a></p>
     <h2>Score groups</h2><p class="hint">Weighted metrics are added within each group. Group scores are multiplied. Use one to three groups.</p><div id="scores">${p.config.scores.map(scoreHtml).join('')}</div><button type="button" data-action="add-score">Add score group</button>
     <fieldset><legend>Heat thresholds</legend><p class="hint">Leave blank to calculate thresholds from the filtered results.</p><div class="row">${['min', 'yellowFrom', 'redFrom', 'max'].map((k, i) => input(['Minimum', 'Yellow from', 'Red from', 'Maximum'][i], `heat-${k}`, h[k], 'type="number" min="0" step="any" placeholder="Automatic"')).join('')}</div></fieldset>
     <fieldset><legend>Filters</legend><div class="row">${patterns('Include paths', 'include', o.include)}${patterns('Exclude paths', 'exclude', o.exclude)}</div><p class="hint">Treemap patterns are relative to the repository root.</p><div class="row">${input('Git history since', 'since', o.since, 'placeholder="2025-01-01T00:00:00Z"')}${input('Git history until', 'until', o.until, 'placeholder="2026-12-31T23:59:59Z"')}</div></fieldset>
@@ -121,6 +124,9 @@ async function drawMap(c, p, number) {
     document.querySelector('#warnings').open = true;
   }
 }
+view.addEventListener('input', event => {
+  if (event.target.id === 'metric-help-search') filterMetricHelp(view, event.target.value);
+});
 document.addEventListener('change', async event => {
   const key = event.target.dataset.select;
   if (!key || !event.target.value) return;

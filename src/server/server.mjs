@@ -76,7 +76,7 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         check(usable(jobs.path(c.id)), 'Start inspection to generate results.');
         return send(await render(jobs.path(c.id), { ...p, options: { ...p.options, authorIdentities: c.authorIdentities ?? [] } }));
       }
-      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/metric-help.js': ['metric-help.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
       if (req.method === 'GET' && assets[url.pathname]) { const [file, type] = assets[url.pathname]; return send(await readFile(new URL(`./public/${file}`, import.meta.url), 'utf8'), 200, type); }
       send({ error: 'Not found.' }, 404);
     } catch (error) { send({ error: error.message }, error.status ?? 500); }

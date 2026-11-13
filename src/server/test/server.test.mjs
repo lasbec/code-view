@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createApp } from '../server.mjs';
 import { openStore, validateInspection, validatePreset, defaultPreset } from '../store.mjs';
+import { metricHelp } from '../public/metric-help.js';
 
 async function temporary(t) { const dir = await mkdtemp(join(tmpdir(), 'code-view-')); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
 test('validates repository boundaries, commit limits and treemap thresholds', () => {
@@ -46,6 +47,9 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());
   const base = `http://127.0.0.1:${app.server.address().port}/api/`;
+  const helpAsset = await fetch(new URL('/metric-help.js', base));
+  assert.equal(helpAsset.status, 200);
+  assert.match(helpAsset.headers.get('content-type'), /text\/javascript/);
   const call = async (path, method = 'GET', value, headers = {}) => {
     const res = await fetch(base + path, { method, headers: { ...(value ? { 'Content-Type': 'application/json' } : {}), ...headers }, ...(value ? { body: JSON.stringify(value) } : {}) });
     return { status: res.status, value: await res.json() };
@@ -70,6 +74,15 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal(rendered.value.ok, true, JSON.stringify(rendered.value));
   assert.match(rendered.value.treeMapHtml, /example.ts/);
   assert.ok(rendered.value.treeMapWarningsHtml);
+  // Compare against the catalog from real inspector schemas so new selectable
+  // columns cannot silently ship without descriptions and examples.
+  const documented = new Map(metricHelp.map(entry => [entry.metric, entry]));
+  assert.deepEqual(rendered.value.metrics.filter(entry => !documented.has(entry.metric)), []);
+  assert.equal(documented.size, metricHelp.length, 'Metric help names must be unique.');
+  for (const { metric } of rendered.value.metrics) {
+    const entry = documented.get(metric);
+    assert.ok(entry.short && entry.long && entry.example, `Incomplete help for ${metric}`);
+  }
   const authorIdentities = [{ name: 'Canonical Test', email: 'canonical@example.test', aliases: ['test@example.test'] }];
   assert.equal((await call(`inspections/${inspection.id}`, 'PUT', { ...config, authorIdentities })).status, 200);
   const updated = (await call('state')).value.inspections[0];
