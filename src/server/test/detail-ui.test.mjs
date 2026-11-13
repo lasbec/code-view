@@ -16,8 +16,11 @@ test('detail UI partitions lines, escapes source, links functions and reveals mu
   const doc = dom.window.document;
   assert.match(doc.querySelector('.inspect-authorship').textContent,/Alice 75.0%.*Bob 25.0%/s);
   assert.equal(doc.querySelector('.inspect-authorship').closest('details'),null);
-  assert.equal(doc.querySelectorAll('.line-composition span').length, 4);
-  assert.deepEqual([...doc.querySelectorAll('.line-composition span')].map(s => s.style.width), ['25%', '25%', '25%', '25%']);
+  assert.equal(doc.querySelectorAll('.authorship-legend > span').length,2);
+  assert.deepEqual([...doc.querySelectorAll('.authorship-composition span')].map(s=>s.style.width),['75%','25%']);
+  assert.match(doc.querySelector('.authorship-composition').getAttribute('aria-label'),/Alice: 75.0%, Bob: 25.0%/);
+  assert.equal(doc.querySelectorAll('.line-composition:not(.authorship-composition) span').length, 4);
+  assert.deepEqual([...doc.querySelectorAll('.line-composition:not(.authorship-composition) span')].map(s => s.style.width), ['25%', '25%', '25%', '25%']);
   assert.equal(doc.querySelector('.source-code script'), null);
   assert.match(doc.querySelector('.source-code').textContent, /<script>/);
   assert.ok(doc.querySelector('a[href*="kind=function"]'));

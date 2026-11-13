@@ -120,3 +120,24 @@ test('zoom path restores after remount and falls back to an available ancestor',
   root.querySelector('nav button').click();assert.equal(root.querySelector('nav').textContent,'/');
   assert.equal(new URLSearchParams(dom.window.location.search).has('treemapPath'),false);
 });
+
+test('directory checkbox hides directory headers and keeps files and zoom available',t=>{
+  const tree={name:'/',path:'',children:[{name:'src',path:'src',area:10,children:[{name:'lib',path:'src/lib',area:10,children:[{name:'a.ts',path:'src/lib/a.ts',area:10,heat:0}]}]}]};
+  const {root}=mount(t,{min:0,yellowFrom:30,redFrom:70,max:100},false,{tree});
+  const checkbox=root.querySelector('.directory-control input');
+  assert.equal(checkbox.checked,true);
+  assert.equal(root.querySelectorAll('.directory').length,2);
+  const tile=()=>[...root.querySelectorAll('.tile')].find(t=>t.textContent==='a.ts');
+  const previousHeight=parseFloat(tile().style.height);
+  checkbox.click();
+  assert.equal(root.querySelectorAll('.directory').length,0);
+  assert.ok(parseFloat(tile().style.height)>previousHeight);
+  assert.equal(root.querySelector('nav').textContent,'/');
+  checkbox.click();
+  root.querySelector('.directory').click();
+  const path=root.querySelector('nav').textContent;
+  checkbox.click();
+  assert.equal(root.querySelector('nav').textContent,path);
+  assert.ok(tile());
+  checkbox.click();assert.ok(root.querySelector('.directory'));
+});

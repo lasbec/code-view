@@ -16,6 +16,7 @@ export function mountTreeMap(host, model) {
   const scale = model.legend;
   let scaleChanged = false;
   let authorMode = false;
+  let showDirectories = true;
   const disabledAuthors = new Set();
   const neutralAuthorColor = '#aeb4bc';
   const authorId = node => node.mainAuthor?.id ?? '__unknown__';
@@ -136,6 +137,16 @@ export function mountTreeMap(host, model) {
     colorSelect.setAttribute('aria-label','Color by'); colorSelect.onchange=()=>{authorMode=colorSelect.value==='author';controls.hidden=authorMode;drawLegend();draw();};
     colorLabel.append(colorSelect); root.append(colorLabel);
   }
+  const directoryLabel = element('label', undefined, 'directory-control');
+  const directoryCheckbox = document.createElement('input'); directoryCheckbox.type = 'checkbox'; directoryCheckbox.checked = showDirectories;
+  directoryCheckbox.onchange = () => {
+    showDirectories = directoryCheckbox.checked;
+    hint.textContent = `Fläche: ${model.areaMetric}.${showDirectories ? ' Verzeichnisse anklicken, um hineinzuzoomen.' : ''}`;
+    draw();
+  };
+  directoryLabel.append(directoryCheckbox, document.createTextNode('Verzeichnisse anzeigen'));
+  directoryLabel.style.cssText = 'display:flex;align-items:center;gap:5px;margin:4px 0;flex-shrink:0';
+  root.append(directoryLabel);
   legend.append(bar, labels); root.append(nav, hint, map, legend, controls, detail);
   let trail = [model.tree], selectedFile = null;
   function restorePath(path) {
@@ -259,7 +270,7 @@ export function mountTreeMap(host, model) {
           for (const box of children) nested(box.node, box.x, box.y, box.width, box.height, depth+1);
           return;
         }
-        const header = depth && w > 60 && h > 48 ? 24 : 0;
+        const header = showDirectories && depth && w > 60 && h > 48 ? 24 : 0;
         partition([...node.children].sort((a, b) => b.area - a.area || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)), x, y + header, w, Math.max(0, h - header), children);
         if (header) layout.push({ node, x, y, width: w, height: header });
         for (const box of children) nested(box.node, box.x, box.y, box.width, box.height, depth + 1);
