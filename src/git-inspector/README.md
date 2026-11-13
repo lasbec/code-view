@@ -14,7 +14,7 @@ Quellen: [Release Notes Git 2.38.0](https://github.com/git/git/blob/v2.38.0/Docu
 ## Aufruf
 
 ```bash
-python3 src/code-inspetor/git_inspector.py \
+python3 src/git-inspector/git_inspector.py \
   --repo /pfad/zum/repository \
   --branch main \
   --output /pfad/zur/analyse.sqlite \
@@ -123,7 +123,7 @@ ORDER BY merges_with_conflicts DESC;
 Mit Git >= 2.38.0 im `PATH`:
 
 ```bash
-cd src/code-inspetor
+cd src/git-inspector
 python3 -m unittest -v
 ```
 
