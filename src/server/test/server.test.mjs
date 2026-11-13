@@ -50,6 +50,11 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   const helpAsset = await fetch(new URL('/metric-help.js', base));
   assert.equal(helpAsset.status, 200);
   assert.match(helpAsset.headers.get('content-type'), /text\/javascript/);
+  for (const [path, type] of [['/theme.js', 'text/javascript'], ['/themes.css', 'text/css']]) {
+    const asset = await fetch(new URL(path, base));
+    assert.equal(asset.status, 200);
+    assert.ok(asset.headers.get('content-type').startsWith(type));
+  }
   const call = async (path, method = 'GET', value, headers = {}) => {
     const res = await fetch(base + path, { method, headers: { ...(value ? { 'Content-Type': 'application/json' } : {}), ...headers }, ...(value ? { body: JSON.stringify(value) } : {}) });
     return { status: res.status, value: await res.json() };

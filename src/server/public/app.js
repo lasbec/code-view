@@ -3,6 +3,8 @@ import { showDetailRoute, closeDetail, detailHash } from './detail-view.js';
 import { metricSelect, functionAreaSelect, termHtml, scoreHtml, readScores, operationSelect, updateAggregation } from './preset-fields.js';
 import { progressHtml } from './progress-view.js';
 import { metricHelpHtml, filterMetricHelp } from './metric-help.js';
+import { initTheme, treemapThemeStyles, receiveTreemapTheme } from './theme.js';
+initTheme();
 const view = document.querySelector('#view');
 let showFunctions = false;
 let state, metrics = [], newInspection = false, newPreset = false, treeKey = '', listKey = '', requestNumber = 0;
@@ -123,7 +125,8 @@ async function drawMap(c, p, number) {
     if (number !== requestNumber || route() !== 'treemap') return;
     metrics = result.metrics;
     const frame = document.createElement('iframe'); frame.title = 'Code treemap'; frame.setAttribute('sandbox', 'allow-scripts');
-    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{height:100%;box-sizing:border-box}body{margin:0;padding:6px;font-family:system-ui;overflow:hidden}.code-view-treemap{height:100%;min-height:0;--treemap-height:auto}</style></head><body>${result.treeMapHtml}</body></html>`;
+    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style id="theme-style">${treemapThemeStyles()}</style><style>html,body{height:100%;box-sizing:border-box}body{margin:0;padding:6px;font-family:system-ui;overflow:hidden;background:var(--cv-bg);color:var(--cv-text)}.code-view-treemap{height:100%;min-height:0;--treemap-height:auto}</style><script>(${receiveTreemapTheme.toString()})();<\/script></head><body>${result.treeMapHtml}</body></html>`;
+    frame.addEventListener('load', () => frame.contentWindow.postMessage({ type: 'code-view-theme', styles: treemapThemeStyles() }, '*'));
     document.querySelector('#map').replaceChildren(frame);
     document.querySelector('#warning-content').innerHTML = result.treeMapWarningsHtml;
   } catch (error) {

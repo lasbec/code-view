@@ -2,7 +2,7 @@
 export function mountTreeMap(host, model) {
   const root = host.attachShadow({ mode: 'open' });
   const style = document.createElement('style');
-  style.textContent = ':host{display:flex;flex-direction:column;font:14px system-ui,sans-serif;color:#17212b}*{box-sizing:border-box}nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;flex-shrink:0}button{font:inherit;cursor:pointer}nav button{border:1px solid #aaa;border-radius:4px;background:#fff;padding:3px 7px}.map{flex:1 1 auto;position:relative;width:100%;height:var(--treemap-height,560px);min-height:100px;background:#f0f2f4;overflow:hidden}.tile{position:absolute;border:1px solid #fff;border-radius:0;color:#111;overflow:hidden;text-align:left;padding:4px;font-size:12px;text-shadow:0 1px 2px #ffffffb0}.tile.directory{padding:0 5px;line-height:22px;white-space:nowrap;text-overflow:ellipsis;font-weight:600}.tile:focus-visible{outline:3px solid #152dff;outline-offset:-3px;z-index:2}.legend{margin:6px 0 0;flex-shrink:0}.bar{height:10px;border:1px solid #555}.labels{position:relative;height:22px;font-size:11px}.labels span{position:absolute;transform:translateX(-50%);white-space:nowrap}.detail{flex:0 0 132px;height:132px;overflow-wrap:anywhere;padding:8px 10px;background:#f0f2f4;max-height:132px;overflow:auto;font-size:12px}.detail-path{display:block;margin-bottom:6px}.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px 20px}.detail h3{font-size:12px;margin:0 0 5px}.detail dl{display:grid;grid-template-columns:1fr auto;gap:3px 10px;margin:0}.detail dt,.detail dd{margin:0}.detail dd{font-variant-numeric:tabular-nums}.detail p{margin:2px 0}.detail table{width:100%;border-collapse:collapse;font-size:11px}.detail td{padding:2px 8px 2px 0}.detail td:last-child{text-align:right}.detail td small{display:block;font-size:10px}.detail small{color:#586779}.hint{margin:4px 0;color:#47505c;font-size:11px;flex-shrink:0}';
+  style.textContent = ':host{display:flex;flex-direction:column;font:14px system-ui,sans-serif;color:var(--cv-text,#17212b)}*{box-sizing:border-box}nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;flex-shrink:0}button{font:inherit;cursor:pointer}nav button{border:1px solid var(--cv-input-border,#aaa);border-radius:4px;background:var(--cv-surface,#fff);color:var(--cv-text,#17212b);padding:3px 7px}.map{flex:1 1 auto;position:relative;width:100%;height:var(--treemap-height,560px);min-height:100px;background:var(--cv-subtle,#f0f2f4);overflow:hidden}.tile{position:absolute;border:1px solid var(--cv-heat-border,#fff);border-radius:0;color:var(--cv-heat-text,#111);overflow:hidden;text-align:left;padding:4px;font-size:12px;text-shadow:var(--cv-heat-label-shadow,0 1px 2px #ffffffb0)}.tile.file-frame{color:var(--cv-text,#17212b);text-shadow:none}.tile.directory{padding:0 5px;line-height:22px;white-space:nowrap;text-overflow:ellipsis;font-weight:600}.tile:focus-visible{outline:3px solid var(--cv-accent,#152dff);outline-offset:-3px;z-index:2}.legend{margin:6px 0 0;flex-shrink:0}.bar{height:10px;border:1px solid var(--cv-input-border,#555)}.labels{position:relative;height:22px;font-size:11px}.labels span{position:absolute;transform:translateX(-50%);white-space:nowrap}.detail{flex:0 0 132px;height:132px;overflow-wrap:anywhere;padding:8px 10px;background:var(--cv-subtle,#f0f2f4);max-height:132px;overflow:auto;font-size:12px}.detail-path{display:block;margin-bottom:6px}.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px 20px}.detail h3{font-size:12px;margin:0 0 5px}.detail dl{display:grid;grid-template-columns:1fr auto;gap:3px 10px;margin:0}.detail dt,.detail dd{margin:0}.detail dd{font-variant-numeric:tabular-nums}.detail p{margin:2px 0}.detail table{width:100%;border-collapse:collapse;font-size:11px}.detail td{padding:2px 8px 2px 0}.detail td:last-child{text-align:right}.detail td small{display:block;font-size:10px}.detail small{color:var(--cv-muted,#586779)}.hint{margin:4px 0;color:var(--cv-muted,#47505c);font-size:11px;flex-shrink:0}';
   root.append(style);
   const nav = document.createElement('nav');
   nav.setAttribute('aria-label', 'Verzeichnispfad');
@@ -14,7 +14,30 @@ export function mountTreeMap(host, model) {
   const labels = document.createElement('div'); labels.className = 'labels';
   const scale = model.legend;
   const percent = value => scale.max === scale.min ? 0 : 100 * (value - scale.min) / (scale.max - scale.min);
-  bar.style.background = scale.max === scale.min ? 'rgb(34,160,70)' : `linear-gradient(to right,rgb(34,160,70),rgb(255,215,0) ${percent(scale.yellowFrom)}%,rgb(225,45,45) ${percent(scale.redFrom)}%,rgb(135,55,190))`;
+  // CSS variables keep the mounted map in sync with theme changes without rebuilding it.
+  // Standalone snippets retain the colors calculated by the data API.
+  const themedHeat = !!getComputedStyle(host).getPropertyValue('--cv-heat-green').trim();
+  const heatStops = [
+    [scale.min, 'var(--cv-heat-green,rgb(34,160,70))'],
+    [scale.yellowFrom, 'var(--cv-heat-yellow,rgb(255,215,0))'],
+    [scale.redFrom, 'var(--cv-heat-red,rgb(225,45,45))'],
+    [scale.max, 'var(--cv-heat-violet,rgb(135,55,190))'],
+  ];
+  function heatColor(node) {
+    if (!themedHeat) return node.color ?? '#c9d0d8';
+    if (node.heat == null) return 'var(--cv-heat-neutral,#c9d0d8)';
+    const value = Math.max(scale.min, Math.min(scale.max, node.heat));
+    if (value === scale.min) return heatStops[0][1];
+    for (let i = 1; i < heatStops.length; i++) {
+      const [to, color] = heatStops[i], [from, previous] = heatStops[i - 1];
+      if (value > to) continue;
+      if (value === to) return color;
+      const weight = 100 * (value - from) / (to - from);
+      return `color-mix(in srgb, ${previous} ${100 - weight}%, ${color})`;
+    }
+    return heatStops.at(-1)[1];
+  }
+  bar.style.background = scale.max === scale.min ? heatStops[0][1] : `linear-gradient(to right,${heatStops[0][1]},${heatStops[1][1]} ${percent(scale.yellowFrom)}%,${heatStops[2][1]} ${percent(scale.redFrom)}%,${heatStops[3][1]})`;
   for (const [name, value] of [['Grün', scale.min], ['Gelb ab', scale.yellowFrom], ['Rot ab', scale.redFrom], ['Violett', scale.max]]) {
     if (scale.max === scale.min && name !== 'Grün') continue;
     const label = document.createElement('span'); label.style.left = `${percent(value)}%`; label.textContent = `${name}: ${Number(value.toPrecision(5))}`;
@@ -126,8 +149,8 @@ export function mountTreeMap(host, model) {
     for (const box of layout) {
       const { node } = box;
       const tile = document.createElement('button'); tile.className = node.children ? 'tile directory' : 'tile'; tile.type = 'button';
-      if (box.frame) { tile.classList.add('file-frame'); tile.style.border = `4px solid ${node.color}`; tile.style.display = 'flex'; tile.style.alignItems = 'flex-start'; }
-      Object.assign(tile.style, { left: `${100 * box.x / width}%`, top: `${100 * box.y / height}%`, width: `${100 * box.width / width}%`, height: `${100 * box.height / height}%`, background: box.frame ? '#edf0f3' : node.color ?? '#c9d0d8' });
+      if (box.frame) { tile.classList.add('file-frame'); tile.style.border = `4px solid ${heatColor(node)}`; tile.style.display = 'flex'; tile.style.alignItems = 'flex-start'; }
+      Object.assign(tile.style, { left: `${100 * box.x / width}%`, top: `${100 * box.y / height}%`, width: `${100 * box.width / width}%`, height: `${100 * box.height / height}%`, background: box.frame ? 'var(--cv-subtle,#edf0f3)' : heatColor(node) });
       tile.textContent = `${node.name}${node.kind === 'function' ? ` (${node.line}:${node.column})` : node.children && node.kind !== 'file' ? '/' : ''}`;
       tile.title = describe(node); tile.setAttribute('aria-label', tile.title);
       tile.onmouseenter = () => { if (!selectedFile) showDetail(node); };

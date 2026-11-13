@@ -98,7 +98,7 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         check(result.model?.ok, result.error || 'Unable to calculate scores.');
         return send(await inspectDetail(jobs.path(c.id), { ...c, preset: p }, url.searchParams.get('id'), kind, result.model, result.expanded));
       }
-      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/detail-view.js': ['detail-view.js', 'text/javascript'], '/list-view.js': ['list-view.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/metric-help.js': ['metric-help.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/preset-fields.js': ['preset-fields.js', 'text/javascript'], '/treemap/src/catalog.mjs': ['../../treemap/src/catalog.mjs', 'text/javascript'] };
+      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/detail-view.js': ['detail-view.js', 'text/javascript'], '/list-view.js': ['list-view.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/metric-help.js': ['metric-help.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/themes.css': ['themes.css', 'text/css'], '/theme.js': ['theme.js', 'text/javascript'], '/preset-fields.js': ['preset-fields.js', 'text/javascript'], '/treemap/src/catalog.mjs': ['../../treemap/src/catalog.mjs', 'text/javascript'] };
       if (req.method === 'GET' && assets[url.pathname]) { const [file, type] = assets[url.pathname]; return send(await readFile(new URL(`./public/${file}`, import.meta.url), 'utf8'), 200, type); }
       send({ error: 'Not found.' }, 404);
     } catch (error) { send({ error: error.message }, error.status ?? 500); }

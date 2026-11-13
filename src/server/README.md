@@ -51,6 +51,13 @@ including uncommitted changes; Git inspection reads current-branch history.
 Repository dependencies must be installed for complete TypeScript resolution.
 The server never checks out, clones, or fetches repositories.
 
+The header’s Theme selector offers Light (default), Dark, Nord, Dracula and
+Solarized. Themes apply immediately throughout the interface, including treemap
+controls and details. Each theme has matching green, yellow, red and violet heat
+colors shared by tiles, file borders and the legend; score thresholds stay the same. The choice
+is stored in this browser’s localStorage, survives reloads and synchronizes across
+open tabs. It is independent of inspection settings and treemap presets.
+
 Configuration changes require Save. Selectors save immediately and persist across
 restarts. Preset changes take effect on the next visit to the Treemap view without
 inspection. New inspections build a separate database and publish it only after

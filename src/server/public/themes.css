@@ -1,0 +1,95 @@
+:root {
+  color-scheme: light;
+  --cv-bg: #f5f7fa;
+  --cv-surface: #ffffff;
+  --cv-subtle: #f8fafc;
+  --cv-hover: #f0f4fa;
+  --cv-text: #1f2937;
+  --cv-strong: #182b49;
+  --cv-muted: #647084;
+  --cv-border: #e2e7ee;
+  --cv-input-border: #cfd7e3;
+  --cv-accent: #244fbd;
+  --cv-link: #3960b6;
+  --cv-on-accent: #ffffff;
+  --cv-focus: #b2c9fc;
+  --cv-info-bg: #edf3fe;
+  --cv-info-border: #d9e4f7;
+  --cv-danger: #9e3038;
+  --cv-danger-bg: #fff0f0;
+  --cv-danger-border: #eebfc4;
+  --cv-warning: #80530c;
+  --cv-warning-bg: #fff2cd;
+  --cv-warning-border: #d7a83c;
+  --cv-success: #477359;
+  --cv-selected: #fff1c5;
+  --cv-shadow: #152b4710;
+  --cv-shadow-strong: #152b4720;
+  --cv-heat-label-shadow: none;
+  --cv-heat-green: #55b875;
+  --cv-heat-yellow: #edca54;
+  --cv-heat-red: #e57775;
+  --cv-heat-violet: #ad82d4;
+  --cv-heat-neutral: #d4dae3;
+  --cv-heat-text: #15202a;
+  --cv-heat-border: #f5f7fa;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --cv-bg: #111827; --cv-surface: #1f2937; --cv-subtle: #182131;
+  --cv-hover: #2b394e; --cv-text: #e5e7eb; --cv-strong: #f9fafb;
+  --cv-muted: #acb8ca; --cv-border: #374151; --cv-input-border: #526079;
+  --cv-accent: #93b4ff; --cv-link: #a4c2ff; --cv-on-accent: #14213d;
+  --cv-focus: #647db1; --cv-info-bg: #20324f; --cv-info-border: #405c88;
+  --cv-danger: #ffadb3; --cv-danger-bg: #47242e; --cv-danger-border: #975260;
+  --cv-warning: #f4d27f; --cv-warning-bg: #443921; --cv-warning-border: #b69748;
+  --cv-success: #a1d9b5; --cv-selected: #514323;
+  --cv-shadow: #00000025; --cv-shadow-strong: #00000050;
+  --cv-heat-green: #60ad82; --cv-heat-yellow: #d8bb68;
+  --cv-heat-red: #d47b82; --cv-heat-violet: #b28dd6;
+  --cv-heat-neutral: #8b98ad; --cv-heat-text: #101824; --cv-heat-border: #182131;
+}
+:root[data-theme="nord"] {
+  color-scheme: dark;
+  --cv-bg: #2e3440; --cv-surface: #3b4252; --cv-subtle: #343b49;
+  --cv-hover: #434c5e; --cv-text: #e5e9f0; --cv-strong: #eceff4;
+  --cv-muted: #b8c5d9; --cv-border: #4c566a; --cv-input-border: #70809a;
+  --cv-accent: #88c0d0; --cv-link: #8fcee0; --cv-on-accent: #2e3440;
+  --cv-focus: #5e81ac; --cv-info-bg: #35475a; --cv-info-border: #5e81ac;
+  --cv-danger: #edb0b6; --cv-danger-bg: #503c48; --cv-danger-border: #bf616a;
+  --cv-warning: #ebcb8b; --cv-warning-bg: #4b453b; --cv-warning-border: #bfa66c;
+  --cv-success: #a3be8c; --cv-selected: #55503e;
+  --cv-shadow: #00000020; --cv-shadow-strong: #00000045;
+  --cv-heat-green: #a3be8c; --cv-heat-yellow: #ebcb8b;
+  --cv-heat-red: #d08790; --cv-heat-violet: #b48ead;
+  --cv-heat-neutral: #8796ad; --cv-heat-text: #242933; --cv-heat-border: #2e3440;
+}
+:root[data-theme="dracula"] {
+  color-scheme: dark;
+  --cv-bg: #282a36; --cv-surface: #303341; --cv-subtle: #292c39;
+  --cv-hover: #44475a; --cv-text: #f8f8f2; --cv-strong: #ffffff;
+  --cv-muted: #bdc3df; --cv-border: #50556b; --cv-input-border: #717990;
+  --cv-accent: #bd93f9; --cv-link: #cba9ff; --cv-on-accent: #282a36;
+  --cv-focus: #8070ac; --cv-info-bg: #3e3657; --cv-info-border: #78639c;
+  --cv-danger: #ff9b9b; --cv-danger-bg: #512f3c; --cv-danger-border: #bf616a;
+  --cv-warning: #f1fa8c; --cv-warning-bg: #484835; --cv-warning-border: #a5aa64;
+  --cv-success: #50fa7b; --cv-selected: #51513b;
+  --cv-shadow: #00000020; --cv-shadow-strong: #00000045;
+  --cv-heat-green: #50c878; --cv-heat-yellow: #e6db82;
+  --cv-heat-red: #e57a86; --cv-heat-violet: #bd93f9;
+  --cv-heat-neutral: #9098b0; --cv-heat-text: #282a36; --cv-heat-border: #282a36;
+}
+:root[data-theme="solarized"] {
+  color-scheme: light;
+  --cv-bg: #fdf6e3; --cv-surface: #fffbed; --cv-subtle: #eee8d5;
+  --cv-hover: #e9e1cb; --cv-text: #475b61; --cv-strong: #073642;
+  --cv-muted: #586e75; --cv-border: #d8cfb7; --cv-input-border: #a9a28d;
+  --cv-accent: #176fa5; --cv-link: #176fa5; --cv-on-accent: #ffffff;
+  --cv-focus: #91bed0; --cv-info-bg: #e3eee5; --cv-info-border: #a0c3be;
+  --cv-danger: #b53229; --cv-danger-bg: #f8e5d8; --cv-danger-border: #d9a397;
+  --cv-warning: #805e00; --cv-warning-bg: #f5e9b8; --cv-warning-border: #b58900;
+  --cv-success: #527000; --cv-selected: #f3e3a5;
+  --cv-heat-green: #a3ae54; --cv-heat-yellow: #d0ad45;
+  --cv-heat-red: #db7766; --cv-heat-violet: #9997ca;
+  --cv-heat-neutral: #c4bda5; --cv-heat-text: #073642; --cv-heat-border: #fdf6e3;
+}
