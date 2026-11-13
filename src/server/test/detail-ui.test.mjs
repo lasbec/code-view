@@ -1,0 +1,27 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+const require = createRequire(new URL('../../treemap/package.json', import.meta.url));
+const { JSDOM } = require('jsdom');
+const { build } = require('esbuild');
+test('detail UI partitions lines, escapes source, links functions and reveals mutation locations', async t => {
+  const bundle = await build({ entryPoints: [new URL('../public/detail-view.js', import.meta.url).pathname], bundle: true, format: 'iife', globalName: 'Inspection', write: false });
+  const dom = new JSDOM('<main></main>', { url: 'http://localhost/#detail?inspection=i&preset=p&showFunctions=true&kind=file&id=a.ts', runScripts: 'outside-only' });
+  t.after(() => dom.window.close());
+  dom.window.HTMLElement.prototype.scrollIntoView = function() {};
+  dom.window.eval(bundle.outputFiles[0].text);
+  const fn = { id: 'a.ts:0', file_id: 'a.ts', name: 'example', line: 1, cyclomatic_complexity: 2, max_nesting: 1, heat: 3 };
+  const data = { kind: 'file', entity: { id: 'a.ts', total_lines: 4, blank_lines: 1, comment_lines: 1, lines_with_comments: 2 }, file: { id: 'a.ts' }, node: { heat: 3, scores: [], topAuthors: [] }, functions: [fn], names: [fn], fileIds: ['a.ts'], preset: 'Current preset', warnings: ['Uncommitted changes'], incoming: [], outgoing: [], mutations: [{ function_id: fn.id, symbol_name: 'options', expression: 'options.x', effect: 'possible', scope: 'parameter', line: 2 }], accesses: [], imports: [], importers: [], exports: [], diagnostics: [], history: [], changeCount: 0, source: 'const a = "<script>";\noptions.x++;\n// comment\n', sourcePath: '/tmp/a.ts' };
+  await dom.window.Inspection.showDetailRoute(async () => data);
+  const doc = dom.window.document;
+  assert.equal(doc.querySelectorAll('.line-composition span').length, 4);
+  assert.deepEqual([...doc.querySelectorAll('.line-composition span')].map(s => s.style.width), ['25%', '25%', '25%', '25%']);
+  assert.equal(doc.querySelector('.source-code script'), null);
+  assert.match(doc.querySelector('.source-code').textContent, /<script>/);
+  assert.ok(doc.querySelector('a[href*="kind=function"]'));
+  const mutation = [...doc.querySelectorAll('details')].find(el => el.querySelector('summary').textContent.startsWith('Mutations'));
+  assert.match(mutation.textContent, /options.*possible/s);
+  mutation.querySelector('[data-source-line]').click();
+  assert.equal(doc.querySelector('.source-code .selected').dataset.line, '2');
+  dom.window.Inspection.closeDetail(); assert.equal(doc.querySelector('#detail-view'), null);
+});

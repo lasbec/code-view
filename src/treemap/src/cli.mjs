@@ -16,14 +16,16 @@ export async function main(args = process.argv.slice(2)) {
     include: { type: 'string', multiple: true }, exclude: { type: 'string', multiple: true },
     repository: { type: 'string' }, 'code-prefix': { type: 'string' }, since: { type: 'string' }, until: { type: 'string' },
     'author-identities': { type: 'string' },
+    'show-functions': { type: 'boolean' },
     'list-metrics': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
   } });
   if (values.help) {
-    console.log('Usage: node src/cli.mjs --input analysis.sqlite --output report.html --config scores.json\nAlternative: --config-json \'{"scores":[{"metrics":[{"metric":"code.function_count"}]}]}\'\nOptional: --include GLOB --exclude GLOB (repeatable), --repository PATH_OR_ID, --code-prefix PATH, --since ISO_DATE, --until ISO_DATE, --author-identities identities.json\nList metrics: --input analysis.sqlite --list-metrics\nWrites the treemap and derived report.warnings.html snippets.');
+    console.log('Usage: node src/cli.mjs --input analysis.sqlite --output report.html --config scores.json\nAlternative: --config-json \'{"scores":[{"metrics":[{"metric":"code_functions.count"}]}]}\'\nOptional: --include GLOB --exclude GLOB (repeatable), --repository PATH_OR_ID, --code-prefix PATH, --since ISO_DATE, --until ISO_DATE, --author-identities identities.json, --show-functions\nList metrics: --input analysis.sqlite --list-metrics\nWrites the treemap and derived report.warnings.html snippets.');
     return { ok: true };
   }
   if (!values.input) throw new Error('--input ist erforderlich.');
   const options = {};
+  if (values['show-functions'] !== undefined) options.showFunctions = values['show-functions'];
   for (const name of ['include', 'exclude', 'repository', 'since', 'until']) if (values[name] !== undefined) options[name] = values[name];
   if (values['code-prefix'] !== undefined) options.codePrefix = values['code-prefix'];
   if (values['list-metrics']) {

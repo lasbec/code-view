@@ -4,7 +4,7 @@ export function walkOwn(node, visit) {
   function walk(n) { if (n !== node && isFunction(n)) return; visit(n); ts.forEachChild(n, walk); }
   walk(node);
 }
-export function lineMetrics(sf, start = 0, end = sf.text.length) {
+export function lineMetrics(sf, start = 0, end = sf.text.length, excluded = []) {
   // AST literal boundaries prevent // inside regexes, strings and templates becoming comments.
   const literals = new Map();
   function collect(n) {
@@ -16,7 +16,7 @@ export function lineMetrics(sf, start = 0, end = sf.text.length) {
   const scanner = ts.createScanner(sf.languageVersion, false, sf.languageVariant, sf.text);
   scanner.setTextPos(start);
   function mark(set, a, b) {
-    for (let p = a; p < b; p++) if (!/\s/.test(sf.text[p])) set.add(sf.getLineAndCharacterOfPosition(p).line);
+    for (let p = a; p < b; p++) if (!excluded.some(([a, b]) => p >= a && p < b) && !/\s/.test(sf.text[p])) set.add(sf.getLineAndCharacterOfPosition(p).line);
   }
   while (scanner.getTextPos() < end) {
     const token = scanner.scan(), a = scanner.getTokenPos();
@@ -53,5 +53,14 @@ export function functionMetrics(fn, sf) {
     ts.forEachChild(n, c => walk(c, depth + Number(control)));
   }
   walk(fn, 0);
-  return { ...lineMetrics(sf, fn.getStart(sf), fn.end), max_nesting: max, cyclomatic_complexity: cyclomatic, cognitive_complexity: cognitive, unsafe };
+  const nested = [];
+  function ranges(n) {
+    if (n !== fn && isFunction(n)) { nested.push([n.getStart(sf), n.end]); return; }
+    ts.forEachChild(n, ranges);
+  }
+  ranges(fn);
+  const start = fn.getStart(sf), source_size_bytes = Buffer.byteLength(sf.text.slice(start, fn.end));
+  const exclusive_size_bytes = source_size_bytes - nested.reduce((sum, [a, b]) => sum + Buffer.byteLength(sf.text.slice(a, b)), 0);
+  const exclusive_effective_lines = lineMetrics(sf, start, fn.end, nested).effective_lines;
+  return { source_size_bytes, exclusive_size_bytes, exclusive_effective_lines, ...lineMetrics(sf, fn.getStart(sf), fn.end), max_nesting: max, cyclomatic_complexity: cyclomatic, cognitive_complexity: cognitive, unsafe };
 }

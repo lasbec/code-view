@@ -1,13 +1,16 @@
+import { showDetailRoute, closeDetail, detailHash } from './detail-view.js';
+import { metricSelect, functionAreaSelect, termHtml, scoreHtml, readScores, operationSelect, updateAggregation } from './preset-fields.js';
 import { progressHtml } from './progress-view.js';
 import { metricHelpHtml, filterMetricHelp } from './metric-help.js';
 const view = document.querySelector('#view');
+let showFunctions = false;
 let state, metrics = [], newInspection = false, newPreset = false, treeKey = '', requestNumber = 0;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const route = () => location.hash.slice(1) || 'treemap';
 const lines = text => text.split('\n').map(s => s.trim()).filter(Boolean);
 const selectedInspection = () => state.inspections.find(c => c.id === state.selection.inspection) ?? state.inspections[0];
 const selectedPreset = () => state.presets.find(c => c.id === state.selection.preset) ?? state.presets[0];
-const defaultPreset = () => ({ name: '', config: { area: 'code_files.size_bytes', scores: [{ name: 'Complexity', metrics: [{ metric: 'code_functions.cyclomatic_complexity', factor: 1 }] }] }, options: {} });
+const defaultPreset = () => ({ name: '', config: { area: 'code_files.effective_lines', operation: 'sum', scores: [{ name: 'Complexity', normalize: true, metrics: [{ metric: 'code_functions.cyclomatic_complexity', min: 10, aggregation: 'sum', factor: 1 }] }] }, options: {} });
 function notice(error) { const n = document.querySelector('#notice'); n.textContent = error?.message ?? error ?? ''; n.hidden = !error; }
 async function api(path, method = 'GET', data) {
   const response = await fetch(`/api/${path}`, { method, ...(data === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }) });
@@ -25,6 +28,10 @@ function authorIdentityHtml(identity = {}) {
   return `<div class="row author-identity">${input('Name', 'author-name', identity.name, 'required')}${input('Primary email', 'author-email', identity.email, 'type="email" required')}${input('Other emails, separated by commas', 'author-aliases', (identity.aliases ?? []).join(', '))}<button type="button" data-action="remove-author">Remove author</button></div>`;
 }
 function render() {
+  if (route().startsWith('detail?')) { showDetailRoute(api); return; }
+  const hadDetail = !!document.querySelector('#detail-view');
+  closeDetail();
+  if (hadDetail && route() === 'treemap' && document.querySelector('#map iframe')) return;
   const outputOpen = document.querySelector('#job details')?.open ?? false;
   document.body.classList.toggle('treemap-page', route() === 'treemap');
   requestNumber++;
@@ -51,23 +58,13 @@ function inspectionView() {
     <fieldset><legend>Author identities</legend><p class="hint">Combine known email addresses for the same person. Applies to all treemap presets for this repository without another inspection.</p><div id="author-identities">${(c.authorIdentities ?? []).map(authorIdentityHtml).join('')}</div><button type="button" data-action="add-author">Add author identity</button></fieldset>
     <div class="actions"><button class="primary" type="submit">Save configuration</button>${c.id ? '<button type="button" data-action="delete-inspection" class="danger">Delete</button>' : ''}</div></fieldset><p data-busy-hint ${busy ? '' : 'hidden'}>Inspection is running. Cancel it or wait before editing.</p></form>`;
 }
-function metricInput(label, name, value) { return input(label, name, value, 'list="metric-catalog" required'); }
-function termHtml(term = {}) {
-  return `<div class="term">${metricInput('Metric', 'metric', term.metric)}${input('Minimum', 'min', term.min, 'type="number" min="0" step="any" placeholder="0"')}${input('Maximum', 'max', term.max, 'type="number" min="0" step="any" placeholder="None"')}${input('Weight', 'factor', term.factor, 'type="number" min="0" step="any" placeholder="1"')}<button type="button" data-action="remove-term" aria-label="Remove metric">Remove</button></div>`;
-}
-function scoreHtml(score = { name: 'New score', metrics: [{}] }) {
-  return `<section class="score"><div class="score-head">${input('Score name', 'score-name', score.name, 'required')}<button type="button" data-action="remove-score">Remove score</button></div><div class="terms">${score.metrics.map(termHtml).join('')}</div><button type="button" data-action="add-term">Add metric</button></section>`;
-}
 function presetView() {
   const p = !newPreset && selectedPreset() || defaultPreset(), h = p.config.heat ?? {}, o = p.options ?? {};
-  const defaults = ['code_files.size_bytes', 'code_functions.cyclomatic_complexity', 'code.function_count', 'code.call_count', 'git.change_count', 'git.conflict_count'];
-  const names = [...new Set([...defaults, ...metrics.map(m => m.metric)])];
   view.innerHTML = heading('Treemap configuration', 'Save presentation presets and use them with any inspected repository.') +
     `<div class="card toolbar">${selection(state.presets, p.id, 'Saved treemap configuration', 'preset')}<button data-action="new-preset">New preset</button><button data-action="duplicate-preset" ${p.id ? '' : 'disabled'}>Duplicate</button></div>
-    <datalist id="metric-catalog">${names.map(m => `<option value="${esc(m)}"></option>`).join('')}</datalist>
-    <form id="preset-form" class="card" data-id="${esc(p.id)}"><div class="row">${input('Preset name', 'name', p.name, 'required')}${metricInput('Rectangle area metric', 'area', p.config.area)}</div>
+    <form id="preset-form" class="card" data-id="${esc(p.id)}"><div class="row">${input('Preset name', 'name', p.name, 'required')}${metricSelect('Rectangle area metric', 'area', p.config.area)}${functionAreaSelect(p.config.functionArea)}</div>
     <p class="hint"><a href="#help">Metric help: descriptions, calculation rules and examples</a></p>
-    <h2>Score groups</h2><p class="hint">Weighted metrics are added within each group. Group scores are multiplied. Use one to three groups.</p><div id="scores">${p.config.scores.map(scoreHtml).join('')}</div><button type="button" data-action="add-score">Add score group</button>
+    <h2>Score groups</h2><p class="hint">Only values above the threshold contribute their excess. Aggregate per file, apply weights, then cap and optionally normalize each group. Use one to three groups.</p><div class="row">${operationSelect('operation', p.config.operation ?? 'sum', ['sum', 'quantile', 'min', 'max', 'product'])}<span id="group-quantile" ${(p.config.operation ?? 'sum') === 'quantile' ? '' : 'hidden'}>${input('Group quantile (0–100)', 'group-quantile', p.config.quantile, 'type="number" min="0" max="100" step="any" placeholder="50"')}</span></div><div id="scores">${p.config.scores.map(scoreHtml).join('')}</div><button type="button" data-action="add-score">Add score group</button>
     <fieldset><legend>Heat thresholds</legend><p class="hint">Leave blank to calculate thresholds from the filtered results.</p><div class="row">${['min', 'yellowFrom', 'redFrom', 'max'].map((k, i) => input(['Minimum', 'Yellow from', 'Red from', 'Maximum'][i], `heat-${k}`, h[k], 'type="number" min="0" step="any" placeholder="Automatic"')).join('')}</div></fieldset>
     <fieldset><legend>Filters</legend><div class="row">${patterns('Include paths', 'include', o.include)}${patterns('Exclude paths', 'exclude', o.exclude)}</div><p class="hint">Treemap patterns are relative to the repository root.</p><div class="row">${input('Git history since', 'since', o.since, 'placeholder="2025-01-01T00:00:00Z"')}${input('Git history until', 'until', o.until, 'placeholder="2026-12-31T23:59:59Z"')}</div></fieldset>
     <div class="actions"><button class="primary" type="submit">Save preset</button>${p.id ? '<button type="button" class="danger" data-action="delete-preset">Delete</button>' : ''}</div></form>`;
@@ -100,17 +97,17 @@ function updateProgress() {
 function treemapView() {
   const c = selectedInspection(), p = selectedPreset();
   view.innerHTML =
-    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}${selection(state.presets, p?.id, 'Treemap configuration', 'preset')}${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
+    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}${selection(state.presets, p?.id, 'Treemap configuration', 'preset')}<label class="checkbox-label"><input type="checkbox" id="show-functions" ${showFunctions ? 'checked' : ''}>Show functions</label>${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
   if (!c) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Please configure inspection</h2><p class="muted">Choose a local repository to get started.</p><a class="button primary" href="#inspections">Configure inspection</a></div>';
   else if (!c.hasResults) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Start inspection</h2><p class="muted">Run the inspectors to explore this repository.</p></div>';
   else if (!p) document.querySelector('#map').innerHTML = '<div class="card empty"><h2>Please configure a treemap preset</h2><a class="button" href="#presets">Create preset</a></div>';
   else { document.querySelector('#map').innerHTML = '<p class="muted">Calculating treemap…</p>'; drawMap(c, p, requestNumber); }
   treeKey = currentTreeKey();
 }
-function currentTreeKey() { return JSON.stringify([state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset()]); }
+function currentTreeKey() { return JSON.stringify([showFunctions, state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset()]); }
 async function drawMap(c, p, number) {
   try {
-    const result = await api(`treemap?inspection=${encodeURIComponent(c.id)}&preset=${encodeURIComponent(p.id)}`);
+    const result = await api(`treemap?inspection=${encodeURIComponent(c.id)}&preset=${encodeURIComponent(p.id)}&showFunctions=${showFunctions}`);
     if (number !== requestNumber || route() !== 'treemap') return;
     metrics = result.metrics;
     const frame = document.createElement('iframe'); frame.title = 'Code treemap'; frame.setAttribute('sandbox', 'allow-scripts');
@@ -128,6 +125,10 @@ view.addEventListener('input', event => {
   if (event.target.id === 'metric-help-search') filterMetricHelp(view, event.target.value);
 });
 document.addEventListener('change', async event => {
+  if (event.target.id === 'show-functions') { showFunctions = event.target.checked; render(); return; }
+  if (event.target.name === 'metric') updateAggregation(event.target.closest('.term'));
+  if (event.target.name === 'aggregation') event.target.closest('.term').querySelector('.quantile-field').hidden = event.target.value !== 'quantile';
+  if (event.target.name === 'operation') document.querySelector('#group-quantile').hidden = event.target.value !== 'quantile';
   const key = event.target.dataset.select;
   if (!key || !event.target.value) return;
   try { await api('selection', 'POST', { [key]: event.target.value }); newInspection = newPreset = false; await load(); render(); } catch (e) { notice(e); }
@@ -145,14 +146,11 @@ view.addEventListener('submit', async event => {
     collection = 'inspections'; value = { name: data.get('name'), repository: data.get('repository'), tsconfig: data.get('tsconfig'), commits: data.get('commits') === '' ? null : Number(data.get('commits')), include: lines(data.get('include')), exclude: lines(data.get('exclude')), authorIdentities };
   } else {
     collection = 'presets';
-    const scores = [...form.querySelectorAll('.score')].map(s => ({ name: s.querySelector('[name="score-name"]').value, metrics: [...s.querySelectorAll('.term')].map(t => {
-      const term = { metric: t.querySelector('[name="metric"]').value };
-      for (const k of ['min', 'max', 'factor']) { const v = t.querySelector(`[name="${k}"]`).value; if (v !== '') term[k] = Number(v); } return term;
-    }) }));
+    const scores = readScores(form);
     const heat = {}; for (const k of ['min', 'max', 'yellowFrom', 'redFrom']) if (data.get(`heat-${k}`) !== '') heat[k] = Number(data.get(`heat-${k}`));
     const options = { include: lines(data.get('include')), exclude: lines(data.get('exclude')) };
     for (const k of ['since', 'until']) if (data.get(k)) options[k] = data.get(k);
-    value = { name: data.get('name'), config: { area: data.get('area'), scores, heat }, options };
+    value = { name: data.get('name'), config: { area: data.get('area'), functionArea: data.get('functionArea'), operation: data.get('operation'), ...(data.get('operation') === 'quantile' ? { quantile: Number(data.get('group-quantile') || 50) } : {}), scores, heat }, options };
   }
   try { await api(`${collection}${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', value); newInspection = newPreset = false; await load(); render(); const message = document.createElement('p'); message.className = 'saving'; message.textContent = 'Saved.'; view.prepend(message); } catch (e) { notice(e); }
 });
@@ -188,3 +186,11 @@ setInterval(async () => {
   polling = true;
   try { await load(); if (route() === 'treemap' && treeKey !== currentTreeKey()) render(); else updateProgress(); } catch (e) { notice(e); } finally { polling = false; }
 }, 1500);
+
+window.addEventListener('message', event => {
+  const frame = document.querySelector('#map iframe');
+  if (event.source !== frame?.contentWindow || event.data?.type !== 'code-view-inspect' || !['file', 'function'].includes(event.data.kind) || typeof event.data.id !== 'string') return;
+  const hash = detailHash(event.data.kind, event.data.id, { inspection: selectedInspection().id, preset: selectedPreset().id, showFunctions: String(showFunctions) });
+  history.pushState({ inspector: true }, '', hash); render();
+});
+window.addEventListener('popstate', () => { render(); });

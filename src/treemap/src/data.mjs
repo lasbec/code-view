@@ -1,5 +1,8 @@
 import initSqlJs from 'sql.js/dist/sql-asm-memory-growth.js';
 import { minimatch } from 'minimatch';
+import { metricById } from './catalog.mjs';
+import { aggregate, validateConfig, scoreMeasurements } from './scoring.mjs';
+import { attachFunctions } from './function-view.mjs';
 import { normalizeAuthorEmail, normalizeAuthorIdentities } from './authors.mjs';
 
 let engine;
@@ -27,35 +30,6 @@ function fail(message) { throw new Error(message); }
 function keys(value, allowed, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail(`${label} muss ein Objekt sein.`);
   for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`${label}: unbekannte Option "${key}".`);
-}
-function number(value, label) {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) fail(`${label} muss eine endliche Zahl ab 0 sein.`);
-  return value;
-}
-function validate(config, catalog) {
-  keys(config, ['area', 'scores', 'heat'], 'Konfiguration');
-  const metric = name => {
-    if (!catalog.has(name)) fail(`Unbekannte Kennzahl "${name}". Verfügbare Kennzahlen mit --list-metrics anzeigen. Für size_bytes den Code-Inspector erneut ausführen.`);
-    return name;
-  };
-  const area = metric(config.area ?? 'code_files.size_bytes');
-  if (!Array.isArray(config.scores) || config.scores.length < 1 || config.scores.length > 3) fail('Es müssen ein bis drei Scores definiert sein.');
-  const scores = config.scores.map((score, i) => {
-    keys(score, ['name', 'metrics'], `Score ${i + 1}`);
-    if (score.name !== undefined && (typeof score.name !== 'string' || !score.name.trim())) fail('Score-Namen müssen nichtleere Texte sein.');
-    if (!Array.isArray(score.metrics) || !score.metrics.length) fail(`Score ${i + 1} benötigt mindestens eine Kennzahl.`);
-    return { name: score.name ?? `Score ${i + 1}`, metrics: score.metrics.map(term => {
-      keys(term, ['metric', 'min', 'max', 'factor'], 'Kennzahlbeitrag');
-      const min = number(term.min ?? 0, 'Minimum');
-      const max = term.max === undefined ? Infinity : number(term.max, 'Maximum');
-      if (max <= min) fail('Das Kennzahl-Maximum muss größer als das Minimum sein.');
-      return { metric: metric(term.metric), min, max, factor: number(term.factor ?? 1, 'Faktor') };
-    }) };
-  });
-  const heat = config.heat ?? {};
-  keys(heat, ['min', 'max', 'yellowFrom', 'redFrom'], 'Heat-Skala');
-  for (const [key, value] of Object.entries(heat)) number(value, `heat.${key}`);
-  return { area, scores, heat };
 }
 function sources(db, options) {
   const tables = new Set(rows(db, "SELECT name FROM sqlite_master WHERE type IN ('table','view')").map(r => r.name));
@@ -94,36 +68,32 @@ function sources(db, options) {
   const definitions = [
     ['code_files', 't.id', ''],
     ['code_functions', 't.file_id', ''],
-    ['code_file_function_counts', 't.file_id', ''],
-    ['code_access_counts', 'fn.file_id', ' JOIN code_functions fn ON fn.id=t.function_id'],
-    ['code_call_counts', 'fn.file_id', ' JOIN code_functions fn ON fn.id=t.caller_id'],
-    ...['code_parameters', 'code_accesses', 'code_shadowing'].map(t => [t, 'fn.file_id', ' JOIN code_functions fn ON fn.id=t.function_id']),
+    ...['code_parameters', 'code_accesses'].map(t => [t, 'fn.file_id', ' JOIN code_functions fn ON fn.id=t.function_id']),
     ['code_calls', 't.file_id', ''], ['code_function_references', 't.file_id', ''],
     ['code_diagnostics', 't.file', ''],
   ].filter(([table]) => tables.has(table)).map(([table, file, joins]) => ({ table, file, from: `${quote(table)} t${joins}`, params: [], git: false }));
   if (changes) {
     definitions.push({ table: 'git_file_changes', file: 't.path', from: `${changes} t`, params, git: true });
     const commitFiles = `(SELECT DISTINCT repository_id,commit_hash,path FROM ${changes})`;
-    for (const table of ['git_commits', 'git_commit_parents', 'git_merge_analysis', 'git_merge_conflict_files', 'git_merge_conflicts', 'git_merge_conflict_paths']) {
+    for (const table of ['git_commits', 'git_merge_conflict_files', 'git_merge_conflicts']) {
       if (!tables.has(table)) continue;
-      const pathCondition = ['git_merge_conflict_files', 'git_merge_conflict_paths'].includes(table) ? ' AND ch.path=t.path' : '';
-      const joinCondition = table === 'git_merge_conflicts' ? ` JOIN git_merge_conflict_paths cp ON cp.repository_id=t.repository_id AND cp.commit_hash=t.commit_hash AND cp.conflict_position=t.position AND cp.path=ch.path` : '';
-      if (table === 'git_merge_conflicts' && !tables.has('git_merge_conflict_paths')) continue;
-      definitions.push({ table, file: 'ch.path', from: `${quote(table)} t JOIN ${commitFiles} ch ON ch.repository_id=t.repository_id AND ch.commit_hash=t.${table === 'git_commits' ? 'hash' : 'commit_hash'}${pathCondition}${joinCondition}`, params, git: true });
+      if (['git_merge_conflict_files', 'git_merge_conflicts'].includes(table)) {
+        if (table === 'git_merge_conflicts' && !tables.has('git_merge_conflict_paths')) continue;
+        const mapping = table === 'git_merge_conflicts' ? ' JOIN git_merge_conflict_paths cp ON cp.repository_id=t.repository_id AND cp.commit_hash=t.commit_hash AND cp.conflict_position=t.position' : '';
+        definitions.push({ table, file: table === 'git_merge_conflicts' ? 'cp.path' : 't.path', from: `${quote(table)} t${mapping} JOIN git_commits c ON c.repository_id=t.repository_id AND c.hash=t.commit_hash WHERE t.repository_id=?${where}`, params, git: true });
+        continue;
+      }
+      definitions.push({ table, file: 'ch.path', from: `${quote(table)} t JOIN ${commitFiles} ch ON ch.repository_id=t.repository_id AND ch.commit_hash=t.hash`, params, git: true });
     }
   }
   const catalog = new Map();
   for (const source of definitions) {
-    for (const column of rows(db, `PRAGMA table_info(${quote(source.table)})`)) {
-      const viewMetrics = { code_file_function_counts: ['function_count'], code_access_counts: ['reads', 'writes', 'mutations'], code_call_counts: ['call_count'] };
-      if ((/INT|REAL|NUM|FLOAT|DOUBLE|DECIMAL/i.test(column.type) || viewMetrics[source.table]?.includes(column.name)) && !['id', 'repository_id'].includes(column.name)) {
-        catalog.set(`${source.table}.${column.name}`, { ...source, expression: `t.${quote(column.name)}`, description: `Summe von ${source.table}.${column.name} je Datei` });
-      }
+    const columns = new Set(rows(db, `PRAGMA table_info(${quote(source.table)})`).map(column => column.name));
+    for (const entry of metricById.values()) {
+      const [table, field] = entry.metric.split('.');
+      if (table !== source.table || field !== 'count' && !columns.has(field)) continue;
+      catalog.set(entry.metric, { ...entry, ...source, expression: field === 'count' ? '1' : `t.${quote(field)}` });
     }
-    catalog.set(`${source.table}.count`, { ...source, expression: '1', description: `Anzahl der ${source.table}-Datensätze je Datei` });
-  }
-  for (const [alias, target] of Object.entries({ 'code.function_count': 'code_functions.count', 'code.call_count': 'code_calls.count', 'git.change_count': 'git_file_changes.count', 'git.conflict_count': 'git_merge_conflict_files.count' })) {
-    if (catalog.has(target)) catalog.set(alias, catalog.get(target));
   }
   return { catalog, prefix, base, changes, params };
 }
@@ -160,14 +130,15 @@ function makeTree(files) {
 export async function listMetrics(bytes, options = {}) {
   const SQL = await (engine ??= initSqlJs());
   const db = new SQL.Database(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes);
-  try { return [...sources(db, options).catalog].map(([metric, value]) => ({ metric, description: value.description })); }
+  try { return [...sources(db, options).catalog].map(([metric, { label, description, aggregation, aggregations, counter }]) => ({ metric, label, description, aggregation, aggregations, counter })); }
   finally { db.close(); }
 }
 export async function calculateTreeMap(bytes, config, options = {}) {
   const diagnostics = [];
   let db;
   try {
-    keys(options, ['include', 'exclude', 'repository', 'codePrefix', 'since', 'until', 'authorIdentities'], 'Optionen');
+    keys(options, ['include', 'exclude', 'repository', 'codePrefix', 'since', 'until', 'authorIdentities', 'showFunctions'], 'Optionen');
+    if (options.showFunctions !== undefined && typeof options.showFunctions !== 'boolean') fail('showFunctions must be a boolean.');
     const identities = new Map(normalizeAuthorIdentities(options.authorIdentities).flatMap(identity =>
       [identity.email, ...identity.aliases].map(email => [email, identity])));
     for (const name of ['include', 'exclude']) if (options[name] !== undefined && (!Array.isArray(options[name]) || options[name].some(p => typeof p !== 'string'))) fail(`${name} muss eine Liste von Glob-Mustern sein.`);
@@ -176,7 +147,7 @@ export async function calculateTreeMap(bytes, config, options = {}) {
     const SQL = await (engine ??= initSqlJs());
     db = new SQL.Database(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes);
     const { catalog, prefix, base, changes, params } = sources(db, options);
-    const selected = validate(config, catalog);
+    const selected = validateConfig(config, catalog);
     const needed = new Set([selected.area, ...selected.scores.flatMap(s => s.metrics.map(t => t.metric))]);
     const files = rows(db, 'SELECT id FROM code_files').map(row => ({ id: row.id, path: join(prefix, row.id), metrics: {} })).filter(file =>
       (!(options.include?.length) || options.include.some(p => minimatch(file.path, p.replace(/^\/+/, ''), { dot: true }))) && !(options.exclude ?? []).some(p => minimatch(file.path, p.replace(/^\/+/, ''), { dot: true })));
@@ -217,12 +188,15 @@ export async function calculateTreeMap(bytes, config, options = {}) {
         }
       }
     }
+    const measurements = new Map();
     for (const metric of needed) {
       const source = catalog.get(metric);
-      const aggregates = rows(db, `SELECT ${source.file} AS file, SUM(COALESCE(${source.expression},0)) AS value, SUM(CASE WHEN ${source.expression} IS NULL THEN 1 ELSE 0 END) AS missing FROM ${source.from} GROUP BY ${source.file}`, source.params);
-      const missing = [];
+      const records = rows(db, `SELECT ${source.file} AS file, ${source.expression} AS value FROM ${source.from}`, source.params);
+      const byFile = new Map();
+      measurements.set(metric, byFile);
+      const missing = new Set();
       for (const file of files) file.metrics[metric] = 0;
-      for (const row of aggregates) {
+      for (const row of records) {
         let filePath;
         if (source.git) filePath = normalizePath(row.file);
         else if (source.table === 'code_diagnostics' && /^(\/|[A-Za-z]:)/.test(row.file ?? '')) {
@@ -232,36 +206,47 @@ export async function calculateTreeMap(bytes, config, options = {}) {
         } else filePath = join(prefix, row.file ?? '');
         const file = byPath.get(filePath);
         if (!file) continue;
+        if (row.value === null) { missing.add(file.path); continue; }
         if (typeof row.value !== 'number' || !Number.isFinite(row.value)) fail(`Die Kennzahl ${metric} enthält einen ungültigen Zahlenwert für ${file.path}.`);
-        file.metrics[metric] = row.value;
-        if (row.missing) missing.push(file.path);
+        if (!byFile.has(file.id)) byFile.set(file.id, []);
+        byFile.get(file.id).push(row.value);
       }
-      if (missing.length) diagnostics.push({ severity: 'warning', code: 'missing-values', message: `${metric}: fehlende Messwerte in ${missing.length} Datei(en) als 0 gewertet.`, paths: missing });
+      for (const file of files) file.metrics[metric] = aggregate(byFile.get(file.id) ?? [], source.aggregation);
+      if (missing.size) diagnostics.push({ severity: 'warning', code: 'missing-values', message: `${metric}: fehlende Messwerte in ${missing.size} Datei(en) als 0 gewertet.`, paths: [...missing] });
     }
     const omitted = [];
     let observedMax = 0;
     const visible = [];
     for (const file of files) {
       file.area = file.metrics[selected.area];
-      file.scores = selected.scores.map(score => {
-        const contributions = score.metrics.map(term => ({ metric: term.metric, value: file.metrics[term.metric], min: term.min, max: Number.isFinite(term.max) ? term.max : null, factor: term.factor, contribution: Math.max(0, Math.min(file.metrics[term.metric], term.max) - term.min) * term.factor }));
-        return { name: score.name, value: contributions.reduce((sum, t) => sum + t.contribution, 0), contributions };
-      });
-      file.heat = file.scores.reduce((product, score) => product * score.value, 1);
-      if (!Number.isFinite(file.heat)) fail(`Score für ${file.path} ist zu groß. Faktoren oder Maxima verkleinern.`);
-      observedMax = Math.max(observedMax, file.heat);
+      file.scores = selected.scores.map((score, groupIndex) => ({ ...scoreMeasurements(score, metric => measurements.get(metric).get(file.id) ?? []), groupIndex }));
       if (file.area <= 0) omitted.push(file.path);
       else visible.push(file);
     }
     if (omitted.length) diagnostics.push({ severity: 'warning', code: 'nonpositive-area', message: `${omitted.length} Datei(en) mit Fläche ≤ 0 werden nicht dargestellt.`, paths: omitted });
     if (!visible.length) diagnostics.push({ severity: 'warning', code: 'empty', message: 'Keine darstellbaren Dateien. Pfadfilter und Flächenkennzahl prüfen.' });
+    const functionNodes = options.showFunctions ? attachFunctions(db, visible, selected, catalog, rows) : [];
+    const scoredNodes = [...visible, ...functionNodes];
+    const maxima = selected.scores.map((score, index) => score.max ?? aggregate(scoredNodes.flatMap(node => node.scores.filter(s => s.groupIndex === index).map(s => s.raw)), 'max'));
+    for (const file of scoredNodes) {
+      file.scores.forEach(score => {
+        const index = score.groupIndex;
+        score.max = maxima[index];
+        score.normalize = selected.scores[index].normalize;
+        score.capped = Math.min(score.raw, score.max);
+        score.value = score.normalize ? (score.max > 0 ? score.capped / score.max * 100 : 0) : score.capped;
+      });
+      file.heat = file.scores.length ? aggregate(file.scores.map(score => score.value), selected.operation, selected.quantile) : null;
+      if (file.heat !== null && !Number.isFinite(file.heat)) fail(`Score für ${file.path} ist zu groß. Faktoren oder Maxima verkleinern.`);
+      observedMax = Math.max(observedMax, file.heat);
+    }
     const min = selected.heat.min ?? 0;
     const max = selected.heat.max ?? observedMax;
     const yellowFrom = selected.heat.yellowFrom ?? min + (max - min) / 3;
     const redFrom = selected.heat.redFrom ?? min + 2 * (max - min) / 3;
     if (max < min || (max === min && !(max === 0 && selected.heat.yellowFrom === undefined && selected.heat.redFrom === undefined)) || (max > min && !(min < yellowFrom && yellowFrom < redFrom && redFrom < max))) fail('Farbstützpunkte müssen min < yellowFrom < redFrom < max erfüllen. Nur eine vollständig leere 0-Skala darf zusammenfallen.');
     const legend = { min, max, yellowFrom, redFrom };
-    for (const file of visible) file.color = colorFor(file.heat, legend);
+    for (const file of scoredNodes) file.color = file.heat === null ? '#c9d0d8' : colorFor(file.heat, legend);
     return { ok: true, files: visible, tree: makeTree(visible), legend, areaMetric: selected.area, diagnostics };
   } catch (error) {
     diagnostics.push({ severity: 'error', code: 'calculation-failed', message: `Treemap konnte nicht erstellt werden: ${error.message}` });

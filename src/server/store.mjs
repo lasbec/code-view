@@ -1,12 +1,12 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { resolve, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { validateConfig } from '../treemap/src/scoring.mjs';
 import { normalizeAuthorIdentities } from '../treemap/src/authors.mjs';
 
-export const defaultPreset = () => ({ name: 'Complexity', config: { area: 'code_files.size_bytes', scores: [{ name: 'Complexity', metrics: [{ metric: 'code_functions.cyclomatic_complexity', factor: 1 }] }] }, options: { include: [], exclude: [] } });
+export const defaultPreset = () => ({ name: 'Complexity', config: { area: 'code_files.effective_lines', operation: 'sum', scores: [{ name: 'Complexity', normalize: true, metrics: [{ metric: 'code_functions.cyclomatic_complexity', min: 10, aggregation: 'sum', factor: 1 }] }] }, options: { include: [], exclude: [] } });
 export function check(condition, message) { if (!condition) throw Object.assign(new Error(message), { status: 400 }); }
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
-const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 function patterns(value = []) { check(Array.isArray(value) && value.every(p => typeof p === 'string' && p.length > 0), 'Patterns must be nonempty strings.'); return value; }
 export function validateInspection(value) {
   check(object(value), 'Inspection must be an object.');
@@ -24,26 +24,7 @@ export function validateInspection(value) {
 export function validatePreset(value) {
   check(object(value) && typeof value.name === 'string' && value.name.trim(), 'A preset name is required.');
   const c = value.config;
-  check(object(c) && Object.keys(c).every(k => ['area', 'scores', 'heat'].includes(k)), 'Invalid treemap configuration.');
-  check(typeof c.area === 'string' && c.area, 'Choose an area metric.');
-  check(Array.isArray(c.scores) && c.scores.length >= 1 && c.scores.length <= 3, 'Use one to three score groups.');
-  for (const s of c.scores) {
-    check(object(s) && typeof s.name === 'string' && s.name.trim() && Array.isArray(s.metrics) && s.metrics.length, 'Each score needs a name and metrics.');
-    for (const m of s.metrics) {
-      check(object(m) && typeof m.metric === 'string' && m.metric, 'Choose a score metric.');
-      check(Object.keys(m).every(k => ['metric', 'min', 'max', 'factor'].includes(k)), 'Unknown metric option.');
-      for (const k of ['min', 'max', 'factor']) check(m[k] === undefined || finite(m[k]), `${k} must be nonnegative.`);
-      check(m.max === undefined || m.max > (m.min ?? 0), 'Maximum must exceed minimum.');
-    }
-  }
-  if (c.heat !== undefined) {
-    check(object(c.heat) && Object.keys(c.heat).every(k => ['min', 'max', 'yellowFrom', 'redFrom'].includes(k)), 'Invalid heat options.');
-    for (const v of Object.values(c.heat)) check(finite(v), 'Heat values must be nonnegative.');
-    const h = c.heat;
-    // Check all explicitly supplied stops, including nonadjacent ones.
-    const stops = [h.min ?? 0, h.yellowFrom, h.redFrom, h.max].filter(v => v !== undefined);
-    check(stops.every((v, i) => i === 0 || v > stops[i - 1]), 'Heat stops must increase: minimum, yellow, red, maximum.');
-  }
+  try { validateConfig(c); } catch (error) { check(false, error.message); }
   const o = value.options ?? {};
   check(object(o) && Object.keys(o).every(k => ['include', 'exclude', 'since', 'until'].includes(k)), 'Invalid treemap filters.');
   for (const k of ['since', 'until']) check(o[k] === undefined || typeof o[k] === 'string' && Number.isFinite(Date.parse(o[k])), 'Dates must be valid ISO timestamps.');
@@ -56,6 +37,15 @@ export async function openStore(directory) {
   let state;
   try { state = JSON.parse(await readFile(file, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; state = { inspections: [], presets: [{ id: randomUUID(), ...defaultPreset() }], selection: {} }; }
+  // Old presets are deliberately discarded, not translated to new semantics.
+  // Keep repository configuration, result metadata and inspection selection intact.
+  if (state.presetSchema !== 2) {
+    state.presets = [{ id: randomUUID(), ...defaultPreset() }];
+    state.selection.preset = state.presets[0].id;
+    state.presetSchema = 2;
+    await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+  }
   let queue = Promise.resolve();
   return {
     get: () => structuredClone(state),

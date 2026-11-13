@@ -4,17 +4,21 @@ import path from 'node:path';
 const schema = `
 CREATE TABLE code_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE code_files (
- id TEXT PRIMARY KEY, size_bytes INTEGER, total_lines INTEGER, blank_lines INTEGER, comment_lines INTEGER,
+ id TEXT PRIMARY KEY, size_bytes INTEGER, outside_size_bytes INTEGER, total_lines INTEGER, blank_lines INTEGER, comment_lines INTEGER,
  lines_with_comments INTEGER, effective_lines INTEGER, import_statements INTEGER,
  imported_bindings INTEGER, dynamic_imports INTEGER, reexports INTEGER, exported_variables INTEGER
 );
 CREATE TABLE code_functions (
  id TEXT PRIMARY KEY, file_id TEXT REFERENCES code_files(id), parent_function_id TEXT REFERENCES code_functions(id) DEFERRABLE INITIALLY DEFERRED,
- name TEXT, kind TEXT, line INTEGER, column INTEGER, end_line INTEGER,
+ source_size_bytes INTEGER, exclusive_size_bytes INTEGER, exclusive_effective_lines INTEGER,
+ name TEXT, signature TEXT, kind TEXT, line INTEGER, column INTEGER, end_line INTEGER,
  total_lines INTEGER, blank_lines INTEGER, comment_lines INTEGER, lines_with_comments INTEGER, effective_lines INTEGER,
  max_nesting INTEGER, cyclomatic_complexity INTEGER, cognitive_complexity INTEGER,
  termination TEXT CHECK(termination IN ('terminates','unknown')), termination_reason TEXT, termination_candidate INTEGER, shadowing_count INTEGER
 );
+CREATE TABLE code_imports (id INTEGER PRIMARY KEY, file_id TEXT REFERENCES code_files(id), target_file_id TEXT, specifier TEXT, kind TEXT, line INTEGER, column INTEGER);
+CREATE TABLE code_symbol_references (id INTEGER PRIMARY KEY, file_id TEXT REFERENCES code_files(id), function_id TEXT REFERENCES code_functions(id), target_file_id TEXT, target_name TEXT, kind TEXT, line INTEGER, column INTEGER);
+CREATE TABLE code_exports (file_id TEXT REFERENCES code_files(id), name TEXT);
 CREATE TABLE code_parameters (
  id TEXT PRIMARY KEY, function_id TEXT REFERENCES code_functions(id), position INTEGER, name TEXT, type TEXT,
  optional INTEGER, rest INTEGER, mutation_count INTEGER, possible_mutation_count INTEGER
@@ -58,9 +62,9 @@ export function openDatabase(output, project) {
     db.exec('BEGIN IMMEDIATE');
     for (const view of ['code_call_counts', 'code_access_counts', 'code_file_function_counts']) db.exec(`DROP VIEW IF EXISTS ${view}`);
     for (const index of ['code_calls_caller', 'code_calls_target', 'code_accesses_function', 'code_references_target']) db.exec(`DROP INDEX IF EXISTS ${index}`);
-    for (const table of ['code_accesses', 'code_shadowing', 'code_parameters', 'code_calls', 'code_function_references', 'code_file_state', 'code_functions', 'code_files', 'code_diagnostics', 'code_metadata']) db.exec(`DROP TABLE IF EXISTS ${table}`);
+    for (const table of ['code_symbol_references', 'code_imports', 'code_exports', 'code_accesses', 'code_shadowing', 'code_parameters', 'code_calls', 'code_function_references', 'code_file_state', 'code_functions', 'code_files', 'code_diagnostics', 'code_metadata']) db.exec(`DROP TABLE IF EXISTS ${table}`);
     db.exec(schema);
-    db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('schema_version', '4');
+    db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('schema_version', '6');
     db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('tsconfig', project.configPath);
     return db;
   } catch (error) { db.close(); throw error; }
@@ -79,7 +83,10 @@ function insert(db, table, rows) {
 export function writeFileResult(db, result, file, fingerprint) {
   const ids = new Set(result.functions.filter(f => f.file_id === file.id).map(f => f.id));
   insert(db, 'code_files', [file]);
+  insert(db, 'code_imports', result.imports.filter(row => row.file_id === file.id));
+  insert(db, 'code_exports', result.exports.filter(row => row.file_id === file.id));
   insert(db, 'code_functions', result.functions.filter(f => ids.has(f.id)).map(({ unsafe, ...f }) => ({ ...f, shadowing_count: result.shadows.filter(s => s.function_id === f.id).length })));
+  insert(db, 'code_symbol_references', result.symbolReferences.filter(row => row.file_id === file.id));
   insert(db, 'code_parameters', result.parameters.filter(p => ids.has(p.function_id)));
   insert(db, 'code_accesses', result.accesses.filter(a => ids.has(a.function_id)));
   insert(db, 'code_shadowing', result.shadows.filter(a => ids.has(a.function_id)));

@@ -25,40 +25,70 @@ Pass a JSON file with `--config`, or JSON text with `--config-json`; choose one.
 
 ```json
 {
-  "area": "code_files.size_bytes",
+  "area": "code_files.effective_lines",
+  "operation": "sum",
   "scores": [
     {
       "name": "Complexity",
+      "normalize": true,
+      "max": 80,
       "metrics": [
-        { "metric": "code_functions.cyclomatic_complexity", "min": 10, "max": 100, "factor": 2 },
-        { "metric": "code.function_count", "factor": 0.5 }
+        { "metric": "code_functions.cyclomatic_complexity", "min": 10, "aggregation": "sum", "factor": 2 },
+        { "metric": "code_functions.max_nesting", "min": 3, "aggregation": "quantile", "quantile": 90 }
       ]
     },
     {
       "name": "Changes",
-      "metrics": [{ "metric": "git.change_count", "min": 1 }]
+      "normalize": true,
+      "metrics": [{ "metric": "git_file_changes.count" }]
     }
   ],
-  "heat": { "min": 0, "max": 1000, "yellowFrom": 250, "redFrom": 700 }
+  "heat": { "min": 0, "max": 200, "yellowFrom": 60, "redFrom": 140 }
 }
 ```
 
-Numeric metrics are summed per file **before** applying thresholds. Each term is
-`max(0, min(value, max) - min) * factor`. Defaults: min 0, no maximum, factor 1.
-Terms within a score are added; the one to three defined scores are multiplied.
-A zero score makes the final score zero. Thresholds and factors are nonnegative;
-a term's maximum must exceed its minimum. Each score needs at least one term.
-`--list-metrics` lists available numeric columns and event counters. Counter aliases
-include `code.function_count`, `code.call_count`, `git.change_count`, `git.conflict_count`.
+For each metric contribution, keep individual measurements **strictly above**
+`min`, subtract `min`, aggregate the remaining excess values per file, then
+multiply by `factor`. Defaults: threshold 0, weight 1, and the catalog's default
+aggregation. No qualifying measurements gives 0. For example, function values
+5, 10, 12 and 20 at threshold 10 contribute 2 and 10: sum 12, maximum 10,
+count 2, median 6. Functions at or below the threshold do not enter quantiles.
 
-Area defaults to `code_files.size_bytes`; rerun the updated Code Inspector to add
-this field to older databases. Select any available metric for a different area.
-Missing/NULL measurements count as zero. Files with nonpositive area are omitted.
-Unknown metrics and invalid configurations are errors, not zero-valued metrics.
+Numeric contributions support `sum`, `min`, `max`, `quantile` and `count`.
+Event counters support `count`: every associated row is a measurement of 1;
+threshold 0 counts every event. The quantile parameter is 0–100 (default 50).
+Quantiles use linear interpolation at index `(n - 1) * quantile / 100` in sorted
+values. Thus 0 is minimum, 50 median and 100 maximum.
+
+Weighted contributions are added within each group. Each group is capped at
+its `max`, even when normalization is disabled. A blank/omitted `max` uses the
+largest raw group score among displayed files. Explicit group maxima must be
+positive. `normalize` defaults to true: divide the capped score by the group
+maximum and multiply by 100. A zero automatic maximum produces 0.
+
+Combine the one to three groups using `operation`: `sum` (default), `quantile`,
+`min`, `max` or `product`. Group quantiles use the top-level `quantile` parameter
+(0–100, default 50) and the same interpolation. There is no final normalization:
+two normalized groups can sum to 200 or multiply to 10,000. All-zero groups
+remain zero; a zero group makes a product zero.
+
+`--list-metrics` exposes an explicit catalog with readable labels, descriptions,
+allowed aggregations and defaults. Identifiers, source positions, diagnostic
+codes, duplicate views and legacy aliases are not selectable metrics.
+Function nesting defaults to maximum; function complexity defaults to sum.
+Function line spans include nested functions, so summing them may count lines
+repeatedly. Cognitive complexity uses the analyzer's local rule.
+
+Area defaults to `code_files.size_bytes`; the server's new default preset uses
+`code_files.effective_lines`. Area uses the catalog's default file aggregation
+without score thresholds. Files with nonpositive area are omitted **before**
+automatic group maxima and legend calculation. Missing/NULL numeric measurements
+are excluded from score aggregation and generate warnings; an empty aggregate
+is 0. Unknown/unavailable metrics and invalid configurations are errors.
 
 Colors interpolate linearly: green at heat min, yellow at yellowFrom, red at
 redFrom, violet at heat max. Values outside the range retain the endpoint color.
-Defaults: min 0, max the largest filtered score, yellow/red at one/two thirds.
+Defaults: min 0, max the largest displayed final score, yellow/red at one/two thirds.
 Require `min < yellowFrom < redFrom < max`; an all-zero default scale is green.
 The scale stays fixed while navigating directories.
 
@@ -74,7 +104,9 @@ The tool derives their mapping from database metadata. For ambiguous or moved
 projects, use `--repository PATH_OR_ID` and `--code-prefix packages/app`.
 Git counters use all stored commits for that repository; optional `--since` and
 `--until` ISO timestamps filter commit time inclusively. Branch filtering and
-following historical renames are not supported.
+following historical renames are not supported. Reconstructed conflicts are mapped
+directly from conflict paths, even when resolution leaves the file unchanged
+against the first parent.
 
 ## JavaScript and browser API
 
@@ -126,3 +158,35 @@ follow historical renames, and do not represent line ownership. Older databases
 without author columns show an unavailable-data message. No reinspection is
 needed. A clicked file stays selected while moving the pointer; click another file
 to change it.
+
+## Function view
+
+Pass `{ showFunctions: true }` in API options or `--show-functions` to the CLI.
+The server has a transient **Show functions** checkbox above the map; it resets
+on page reload and is not stored in presets. The preset's `functionArea` selects
+a function-level size metric (default `code_functions.exclusive_size_bytes`).
+File-only metrics cannot be selected for function size.
+
+Files retain their configured total area and become containers with colored
+borders showing their file score. Each function, including nested callbacks and
+methods, is a direct child tile labelled with its name and source location.
+An **Outside functions** tile reserves the proportion of source bytes outside
+functions. Remaining area is distributed by the selected raw function size
+metric, without score thresholds. Zero weights receive a small minimum; if all
+weights are zero, exclusive source sizes supply the proportions instead.
+The minimum weight is 0.5% of the largest weight divided by function count.
+A file without functions consists entirely of the neutral outside tile.
+
+Function scoring applies the same thresholds, file aggregation operations and
+weights to measurements owned by that function. File-only metrics are excluded.
+Empty scoregroups are omitted from function combination; a function with no
+applicable groups has a neutral fill and no score. Details show raw values and
+thresholded contributions. No file history is attributed to individual functions.
+Automatic group maxima and the legend are shared by visible files and functions;
+explicit limits still take precedence. Outside tiles do not enter scoring.
+
+Function view requires inspector schema 5. Older results remain usable in file
+view and request a new inspection when function subdivision is enabled. Source
+byte measurements are exclusive, so nested function spans are never counted
+again in the containing function. Exclusive code-line measurements can overlap
+on physical lines containing more than one function.

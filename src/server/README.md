@@ -33,9 +33,12 @@ The four navigation entries provide:
   or closing the inspection output panel.
 - Treemap configuration: named global presets with area metrics, one to three
   weighted score groups, heat thresholds, path filters and Git history dates.
-  Metric fields offer suggestions from the last displayed database and also
-  accept metric names supported by the existing treemap API.
-- Help: a searchable reference for all selectable metrics, including aliases,
+  Metric selectors use a curated catalog with readable names and no duplicate
+  aliases, source positions or diagnostic codes. Contributions apply thresholds
+  before configurable file aggregation (including interpolated quantiles).
+  Each group has an optional upper limit and a normalization checkbox (0–100).
+  Groups combine using sum, quantile, minimum, maximum or product.
+- Help: a searchable reference for all selectable catalog metrics,
   with compact rows showing each short description once. Calculation rules and
   examples expand side by side on desktop and stack on small screens. The
   general introduction is collapsed by default. Explains
@@ -79,3 +82,37 @@ authors of merge commits, calculated from the existing SQLite data. Merge counts
 include branch integrations and possible conflict resolutions; they do not prove
 that the merge author edited the file. Existing Git score metrics still include
 merges. No new inspection is needed for these lists or identity changes.
+
+Treemap preset format version 2 deliberately discards older treemap presets on
+first startup and creates a new default preset. Inspection configurations,
+repository settings, author identities and existing result databases are preserved.
+Run inspection again to refresh measurements affected by analyzer corrections;
+changing aggregation, normalization or group operations needs no reinspection.
+See [calculation rules and JSON configuration](../treemap/USAGE.md).
+
+The treemap toolbar's **Show functions** checkbox temporarily subdivides files
+into function tiles, with the file score shown on the surrounding border.
+Choose **Function tile size** in the preset configuration. Function colors exclude
+file-only metrics; group limits and the legend are shared with file scores.
+The checkbox is never persisted. Older analyses require one new inspection to
+record exclusive source sizes; existing file views continue to work.
+
+## File and function inspection
+
+Click a file or function in the treemap to open its compact inspection view.
+Linked functions and files open their details; Back preserves the mounted treemap
+and its zoom. Details retain the active preset and score normalization context,
+including when following links outside the preset's path filters.
+
+Views show score contributions, line composition, incoming usages, outgoing calls,
+complexity, signatures/parameters or file exports/imports/history, and mutations.
+Mutation rows identify the externally visible object, expression, certainty and
+source line. Newly created local objects are excluded; aliases to parameters or
+other external objects retain the original affected object's name.
+
+Source previews read current repository files on demand, without snapshots.
+A different HEAD or uncommitted changes produce a warning that metrics and source
+locations may be stale. Missing files remain inspectable through stored metrics.
+Source symlinks must resolve inside the configured repository. Open in editor uses
+VS Code's file URL handler. Run inspection again to collect exact imports,
+non-function symbol usages, exports and signatures from schema version 6.

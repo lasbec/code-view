@@ -12,7 +12,7 @@ const unwrap = n => { while (n && (ts.isParenthesizedExpression(n) || ts.isAsExp
 const mutators = new Set(['push','pop','shift','unshift','splice','sort','reverse','fill','copyWithin','set','add','delete','clear']);
 
 export function analyze(project, changedPaths = new Set(project.files.map(f => f.path)), cached = { functions: [], calls: [] }, onFile = () => {}, onIndexed = () => {}, onAnalysis = () => {}) {
-  const result = { files: [], functions: [], parameters: [], accesses: [], calls: [], references: [], shadows: [], diagnostics: project.diagnostics };
+  const result = { files: [], functions: [], parameters: [], accesses: [], calls: [], references: [], symbolReferences: [], imports: [], exports: [], shadows: [], diagnostics: project.diagnostics };
   const byNode = new Map(), byId = new Map();
   const nodeId = n => `${slash(path.relative(project.base, n.getSourceFile().fileName))}:${n.getStart()}`;
   function symbol(checker, n) {
@@ -40,6 +40,14 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
     const changed = changedPaths.has(entry.path);
     let imports = 0, bindings = 0, dynamic = 0, reexports = 0;
     function scan(n) {
+      const specifier = (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) ? n.moduleSpecifier
+        : ts.isImportEqualsDeclaration(n) && ts.isExternalModuleReference(n.moduleReference) ? n.moduleReference.expression
+        : ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.ImportKeyword ? n.arguments[0] : null;
+      if (changed && specifier) {
+        const target = checker.getSymbolAtLocation(specifier)?.declarations?.find(ts.isSourceFile);
+        result.imports.push({ file_id: entry.path, target_file_id: target ? slash(path.relative(project.base, target.fileName)) : null,
+          specifier: specifier.text ?? specifier.getText(sf), kind: ts.isExportDeclaration(n) ? 'reexport' : ts.isCallExpression(n) ? 'dynamic' : 'import', ...location(n) });
+      }
       if (ts.isImportDeclaration(n) || ts.isImportEqualsDeclaration(n)) {
         imports++;
         if (ts.isImportEqualsDeclaration(n)) bindings++;
@@ -57,7 +65,7 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
         while (container && !ts.isClassLike(container)) container = container.parent;
         if (container?.name && (ts.isMethodDeclaration(n) || ts.isConstructorDeclaration(n) || ts.isAccessor(n))) name = `${container.name.text}.${name}`;
         const row = { id, file_id: entry.path, parent_function_id: nearestFunction(n) ? nodeId(nearestFunction(n)) : null, name, kind: ts.SyntaxKind[n.kind], ...pos,
-          end_line: sf.getLineAndCharacterOfPosition(n.end - 1).line + 1, ...metrics, termination: 'unknown', termination_reason: null };
+          signature: checker.getSignatureFromDeclaration(n) ? checker.signatureToString(checker.getSignatureFromDeclaration(n)) : name, end_line: sf.getLineAndCharacterOfPosition(n.end - 1).line + 1, ...metrics, termination: 'unknown', termination_reason: null };
         if (!changed) Object.assign(row, cached.functions.find(f => f.id === id) ?? { unsafe: true });
         byNode.set(n, row); byId.set(id, row);
         if (changed) result.functions.push(row);
@@ -69,11 +77,12 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
     if (!changed) { onIndexed(++indexed, project.files.length); continue; }
     const module = checker.getSymbolAtLocation(sf);
     const exports = module ? checker.getExportsOfModule(module) : [];
+    for (const exported of exports) result.exports.push({ file_id: entry.path, name: exported.name });
     const exportedVars = new Set(exports.flatMap(s => {
       if (s.flags & ts.SymbolFlags.Alias) s = checker.getAliasedSymbol(s);
       return (s.declarations ?? []).filter(d => (ts.isVariableDeclaration(d) || ts.isBindingElement(d)) && d.getSourceFile() === sf && !nearestFunction(d)).map(nodeId);
     }));
-    result.files.push({ id: entry.path, size_bytes: statSync(sf.fileName).size, ...lineMetrics(sf), import_statements: imports, imported_bindings: bindings, dynamic_imports: dynamic, reexports, exported_variables: exportedVars.size });
+    result.files.push({ id: entry.path, size_bytes: statSync(sf.fileName).size, outside_size_bytes: statSync(sf.fileName).size - result.functions.filter(f => f.file_id === entry.path && !f.parent_function_id).reduce((sum, f) => sum + f.source_size_bytes, 0), ...lineMetrics(sf), import_statements: imports, imported_bindings: bindings, dynamic_imports: dynamic, reexports, exported_variables: exportedVars.size });
     onIndexed(++indexed, project.files.length);
   }
   onAnalysis();
@@ -117,6 +126,10 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
       const d = s.valueDeclaration ?? s.declarations?.[0];
       if (activeRoots?.has(d)) return activeRoots.get(d);
       if (d && ts.isBindingElement(d)) {
+        const type = checker.getTypeAtLocation(d.name);
+        const reference = t => !!(t.flags & (ts.TypeFlags.Object | ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter)) || t.isUnion?.() && t.types.some(reference);
+        // Destructuring a primitive copies its value, not its containing object.
+        if (!reference(type)) return { symbol: s, declaration: d, expr };
         let container = d.parent;
         while (ts.isBindingPattern(container) || ts.isBindingElement(container)) container = container.parent;
         if (ts.isParameter(container)) return { symbol: s, declaration: container, expr };
@@ -164,6 +177,13 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
       }
       if (runtimeName(n) || ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n) || ts.isExportSpecifier(n)) {
         const candidates = targets(checker, ts.isExportSpecifier(n) ? (n.propertyName ?? n.name) : n);
+        if (!candidates.length) {
+          const resolved = symbol(checker, ts.isPropertyAccessExpression(n) ? n.name : ts.isExportSpecifier(n) ? n.name : n);
+          const declaration = resolved?.declarations?.[0];
+          if (declaration && declaration.getSourceFile() !== sf) result.symbolReferences.push({
+            file_id: filePath, function_id: owner?.id ?? null, target_file_id: slash(path.relative(project.base, declaration.getSourceFile().fileName)),
+            target_name: n.getText(sf), kind: referenceKind(n), ...location(n) });
+        }
         for (const target of candidates) result.references.push({ function_id: owner?.id ?? null, file_id: filePath, target_id: byId.has(nodeId(target)) ? nodeId(target) : null, target_name: n.getText(sf), kind: ts.isExportSpecifier(n) ? 'export' : referenceKind(n), ...location(n) });
       }
       ts.forEachChild(n, c => scan(c, owner));
@@ -172,9 +192,10 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
     for (const [fn, row] of byNode) {
       if (fn.getSourceFile() !== sf) continue;
       activeRoots = new Map();
-      function record(expr, mode, effect = 'definite', viaCall = false) {
+      function record(expr, mode, effect = 'definite', viaCall = false, origin = null) {
         expr = unwrap(expr);
-        const r = root(expr); if (!r || r.localRoot) return;
+        const r = origin ?? root(expr); if (!r || r.localRoot) return;
+        if (r.origins) { for (const possible of r.origins) record(expr, mode, 'possible', viaCall, possible); return; }
         if (r.possible) effect = 'possible';
         const property = ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr);
         const mutating = mode === 'mutate' || property && mode !== 'read';
@@ -208,6 +229,12 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
             if (origin) activeRoots.set(n, origin);
           }
         }
+        if (ts.isForOfStatement(n) || ts.isForInStatement(n)) {
+          if (ts.isVariableDeclarationList(n.initializer)) access(n.initializer);
+          else writeTarget(n.initializer, 'write');
+          access(n.expression); access(n.statement);
+          return;
+        }
         if (ts.isCallExpression(n)) {
           const e = unwrap(n.expression);
           if (ts.isPropertyAccessExpression(e)) {
@@ -233,7 +260,12 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
                 if (ts.isIfStatement(p) || ts.isConditionalExpression(p) || ts.isSwitchStatement(p) || ts.isIterationStatement(p, false) || ts.isTryStatement(p) || ts.isBinaryExpression(p) && [ts.SyntaxKind.AmpersandAmpersandToken,ts.SyntaxKind.BarBarToken,ts.SyntaxKind.QuestionQuestionToken].includes(p.operatorToken.kind)) conditional = true;
               }
               const origin = root(n.right) ?? { localRoot: true };
-              if (conditional) { const previous = root(left); if (previous) activeRoots.set(d, { ...previous, possible: true }); }
+              if (conditional) {
+                const previous = root(left) ?? { localRoot: true };
+                const origins = [...(previous.origins ?? [previous]), ...(origin.origins ?? [origin])];
+                const unique = origins.filter((r, index) => origins.findIndex(other => other.declaration === r.declaration && other.thisRoot === r.thisRoot && other.localRoot === r.localRoot) === index);
+                activeRoots.set(d, { origins: unique.map(r => ({ ...r, possible: true })) });
+              }
               else activeRoots.set(d, origin);
             }
           }
@@ -253,6 +285,7 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
       }
       function writeTarget(n, mode) {
         n = unwrap(n);
+        if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) { writeTarget(n.left, mode); access(n.right); return; }
         if (ts.isArrayLiteralExpression(n)) { for (const e of n.elements) writeTarget(e, mode); return; }
         if (ts.isObjectLiteralExpression(n)) { for (const e of n.properties) writeTarget(ts.isPropertyAssignment(e) ? e.initializer : ts.isShorthandPropertyAssignment(e) ? e.name : e.expression, mode); return; }
         if (ts.isSpreadElement(n) || ts.isSpreadAssignment(n)) { writeTarget(n.expression, mode); return; }

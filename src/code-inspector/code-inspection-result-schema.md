@@ -1,6 +1,6 @@
 # Code inspection result schema
 
-SQLite, schema version `4`. See [TypeScript usage](typescript/usage.md).
+SQLite, schema version `6`. See [TypeScript usage](typescript/usage.md).
 
 ## Conventions
 
@@ -22,6 +22,7 @@ One row per selected source file.
 | --- | --- | --- |
 | `id` | TEXT PK | Relative file path. |
 | `size_bytes` | INTEGER | File size in bytes on disk. |
+| `outside_size_bytes` | INTEGER | File bytes outside top-level implemented function spans, including comments, whitespace and any BOM. |
 | `total_lines` | INTEGER | All lines; a trailing newline adds no extra line. |
 | `blank_lines` | INTEGER | Lines without code or comment text. |
 | `comment_lines` | INTEGER | Comment-only lines. |
@@ -41,6 +42,9 @@ One row per function with an implementation; overload signatures without a body 
 | --- | --- | --- |
 | `id` | TEXT PK | Function node ID. |
 | `file_id` | TEXT FK | File → `code_files.id`. |
+| `source_size_bytes` | INTEGER | UTF-8 bytes in the function span, including nested functions. |
+| `exclusive_size_bytes` | INTEGER | Function span bytes minus directly nested function spans. |
+| `exclusive_effective_lines` | INTEGER | Code lines with tokens outside nested function spans; functions may share a physical line. |
 | `parent_function_id` | TEXT FK | Immediately enclosing function → `code_functions.id`; otherwise `NULL`. |
 | `name` | TEXT | Function name, inferred variable name or `<anonymous@line:column>`. |
 | `kind` | TEXT | TypeScript SyntaxKind, listed below. |
@@ -178,7 +182,7 @@ Fingerprints are recalculated each run; previous analysis results are not reused
 
 | Key | Value |
 | --- | --- |
-| `schema_version` | `4`. |
+| `schema_version` | `6`. |
 | `analyzer_version` | `1.0.0`. |
 | `typescript_version` | `5.9.3`. |
 | `tsconfig` | Absolute path to the main tsconfig. |
@@ -215,3 +219,15 @@ Fingerprints are recalculated each run; previous analysis results are not reused
 | Call graph | Recursive cycles and targets outside the analysis remain unknown. |
 | Model limit | No formal runtime proof for proxies, implicit conversions or modified bindings. |
 | Static targets | Symbol resolution and simple constant function aliases; dynamic dispatch remains uncertain. |
+
+## Inspection detail metadata (schema version 6)
+
+`code_functions.signature` stores the compiler-rendered signature. No source text is stored.
+`code_imports` stores `file_id`, resolved `target_file_id` (nullable), `specifier`,
+`kind` (`import`, `reexport`, `dynamic`), and 1-based `line`/`column`.
+Targets outside inspected files remain descriptive external dependencies.
+`code_exports` stores exported symbol names per file.
+`code_symbol_references` records non-function cross-file runtime symbol usages with
+owning function (nullable for module scope), source file, target file, expression
+name, usage kind, and location. Function usages remain in `code_function_references`.
+Re-run inspection to populate these tables in existing databases.

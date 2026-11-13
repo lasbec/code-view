@@ -5,5 +5,6 @@ try {
   const bytes = await readFile(workerData.path);
   const metrics = await listMetrics(bytes);
   const result = await calculateTreeMap(bytes, workerData.preset.config, workerData.preset.options);
-  parentPort.postMessage({ ...renderTreeMap(result), metrics, ok: result.ok, diagnostics: result.diagnostics });
+  const expanded = workerData.detail ? await calculateTreeMap(bytes, workerData.preset.config, { ...workerData.preset.options, include: [], exclude: [], showFunctions: true }) : result;
+  parentPort.postMessage({ ...renderTreeMap(result), metrics, ...(workerData.detail ? { model: result, expanded } : {}), ok: result.ok, diagnostics: result.diagnostics });
 } catch (error) { parentPort.postMessage({ error: error.message }); }

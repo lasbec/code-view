@@ -165,7 +165,7 @@ test('shared databases retain legacy and unrelated objects and accept another pr
  assert.equal(reopened.prepare('SELECT name FROM code_functions').get().name,'b');
  assert.equal(reopened.prepare("SELECT value FROM code_metadata WHERE key='tsconfig'").get().value,path.join(second.dir,'tsconfig.json'));
  const objects=reopened.prepare("SELECT type,name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name NOT IN ('files','legacy_index','legacy_view','code_custom')").all();
- assert.equal(objects.filter(o=>o.type==='table').length,10);
+ assert.equal(objects.filter(o=>o.type==='table').length,13);
  assert.equal(objects.filter(o=>o.type==='view').length,3);
  assert.equal(objects.filter(o=>o.type==='index').length,4);
  assert.ok(objects.every(o=>o.name.startsWith('code_')));
@@ -207,5 +207,52 @@ test('stores actual UTF-8 file size in bytes, including BOM and CRLF', t => {
  assert.equal(result.files[0].size_bytes,Buffer.byteLength(text));
  const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
  assert.equal(db.prepare('SELECT size_bytes FROM code_files').get().size_bytes,readFileSync(path.join(dir,'size.ts')).length);
- assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'4');
+ assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'6');
+});
+
+test('iteration targets and destructuring defaults are writes; branch aliases retain possible origins', t => {
+ const {args}=fixture(t,{'a.ts':`export let state=0;
+ export const object={x:""};
+ export function loops(xs:number[]) { for(state of xs) {} for(object.x in {a:1}) {} }
+ export function branch(p:{x:number}, flag:boolean) { let a={x:0}; if(flag) a=p; a.x=1; }
+ export function defaults(p:{x:number}) { ({x:p.x=0}={x:1}); }
+ export function primitive(p:{x:number}) { const {x}=p; x.toString(); }
+ export const {value}={value:1};
+ export function snapshot() { return value; }
+ export function objectAlias(p:{x:{y:number}}) { const {x}=p; x.y=1; }
+ `});
+ const r=main(args),fn=name=>r.functions.find(f=>f.name===name),params=name=>r.parameters.filter(p=>p.function_id===fn(name).id);
+ const events=r.accesses.filter(a=>a.function_id===fn('loops').id);
+ assert.equal(events.find(a=>a.expression==='state').writes,1);
+ assert.equal(events.find(a=>a.expression==='state').reads,0);
+ assert.equal(events.find(a=>a.expression==='object.x').mutations,1);
+ assert.equal(params('branch')[0].possible_mutation_count,1);
+ assert.equal(params('defaults')[0].mutation_count,1);
+ assert.equal(params('primitive')[0].possible_mutation_count,0);
+ assert.equal(params('objectAlias')[0].mutation_count,1);
+ assert.equal(r.accesses.find(a=>a.function_id===fn('snapshot').id).symbol_name,'value');
+});
+
+test('exclusive UTF-8 function sizes partition each source without nested double counting', t => {
+ const source='// ä\r\nexport function outer(){\r\n const inner=()=>{\r\n return "🍀";\r\n };\r\n return inner();\r\n}\r\nexport const top=1;\r\n';
+ const {args,dir}=fixture(t,{'a.ts':source,'plain.ts':'export const value="ä";\n'}),r=main(args);
+ const functions=r.functions.filter(f=>f.file_id==='a.ts'),outer=functions.find(f=>f.name==='outer'),inner=functions.find(f=>f.name==='inner'),file=r.files.find(f=>f.id==='a.ts');
+ assert.equal(outer.source_size_bytes,outer.exclusive_size_bytes+inner.exclusive_size_bytes);
+ assert.equal(file.size_bytes,file.outside_size_bytes+functions.reduce((sum,f)=>sum+f.exclusive_size_bytes,0));
+ assert.ok(inner.exclusive_size_bytes>0);assert.ok(outer.exclusive_effective_lines<outer.effective_lines);
+ const plain=r.files.find(f=>f.id==='plain.ts');assert.equal(plain.size_bytes,plain.outside_size_bytes);
+ const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
+ assert.equal(db.prepare('SELECT exclusive_size_bytes FROM code_functions WHERE id=?').get(inner.id).exclusive_size_bytes,inner.exclusive_size_bytes);
+});
+
+test('stores exact imports, reexports, dynamic imports and signatures without source snapshots', t => {
+ const {dir,args}=fixture(t, {'b.ts':'export const value=1; export function leaf(x:number){return x;}', 'a.ts':"import {leaf,value} from './b.js'; export {leaf} from './b.js'; export async function load(){const x=value; return import('./b.js');}"});
+ main(args);
+ const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
+ const imports=db.prepare('SELECT * FROM code_imports ORDER BY id').all();
+ assert.equal(db.prepare("SELECT target_file_id FROM code_symbol_references WHERE target_name='value'").get().target_file_id,'b.ts');
+ assert.equal(imports.length,3);assert.ok(imports.every(row=>row.target_file_id==='b.ts'));
+ assert.deepEqual(imports.map(row=>row.kind),['import','reexport','dynamic']);
+ assert.match(db.prepare("SELECT signature FROM code_functions WHERE name='leaf'").get().signature,/number/);
+ assert.ok(db.prepare("SELECT name FROM code_exports WHERE file_id='a.ts'").all().some(row=>row.name==='leaf'));
 });

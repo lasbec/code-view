@@ -40,7 +40,7 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   git('init', '-b', 'master'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.test');
   await writeFile(join(repo, 'master'), 'Branch and path share a name.\n');
   await writeFile(join(repo, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', noLib: true }, include: ['*.ts'] }));
-  await writeFile(join(repo, 'example.ts'), 'export function example(x: number) { return x > 2 ? x : 0; }\n');
+  await writeFile(join(repo, 'example.ts'), 'export function example(x: number, options = {enabled:false}) { options.enabled = true; const local = {value:0}; local.value++; return x > 2 ? x : 0; }\n');
   await writeFile(join(repo, 'excluded.ts'), 'export const excluded = 1;');
   git('add', '.'); git('commit', '-m', 'fixture');
   const data = join(dir, 'data'), app = await createApp({ directory: data });
@@ -74,6 +74,34 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal(rendered.value.ok, true, JSON.stringify(rendered.value));
   assert.match(rendered.value.treeMapHtml, /example.ts/);
   assert.ok(rendered.value.treeMapWarningsHtml);
+  const detailURL = `detail?inspection=${inspection.id}&preset=${state.presets[0].id}&kind=file&id=example.ts`;
+  const detail = await call(detailURL);
+  assert.equal(detail.status, 200, JSON.stringify(detail.value));
+  assert.equal(detail.value.warnings.length, 0);
+  assert.equal(detail.value.node.heat, JSON.parse(rendered.value.treeMapHtml.match(/\"heat\":([0-9.]+)/)[1]));
+  assert.match(detail.value.source, /export function example/);
+  assert.deepEqual(detail.value.exports.map(e => e.name), ['example']);
+  const fn = detail.value.functions[0];
+  const fnDetail = await call(`detail?inspection=${inspection.id}&preset=${state.presets[0].id}&kind=function&id=${encodeURIComponent(fn.id)}`);
+  assert.equal(fnDetail.status,200,JSON.stringify(fnDetail.value));
+  assert.match(fnDetail.value.entity.signature,/number/);
+  assert.ok(fnDetail.value.mutations.some(m=>m.symbol_name==='options' && m.line===1));
+  assert.ok(fnDetail.value.mutations.every(m=>m.symbol_name!=='local'));
+  assert.equal((await call(detailURL.replace('example.ts','../secret'))).status,404);
+  await writeFile(join(repo, 'example.ts'), '// current edited source\n');
+  const edited = await call(detailURL);
+  assert.match(edited.value.source, /current edited source/);
+  assert.ok(edited.value.warnings.some(w=>/Uncommitted/.test(w)));
+  git('add','example.ts');git('commit','-m','edit after inspection');
+  assert.ok((await call(detailURL)).value.warnings.some(w=>/differs from inspected commit/.test(w)));
+  git('revert','--no-edit','HEAD');
+
+  const functionView = await call(`treemap?inspection=${inspection.id}&preset=${state.presets[0].id}&showFunctions=true`);
+  assert.equal(functionView.value.ok, true, JSON.stringify(functionView.value));
+  assert.match(functionView.value.treeMapHtml, /Outside functions/);
+  assert.match(functionView.value.treeMapHtml, /exclusive_size_bytes/);
+  assert.equal((await call(`treemap?inspection=${inspection.id}&preset=${state.presets[0].id}&showFunctions=invalid`)).status,400);
+  assert.equal((await openStore(data)).get().presets[0].options.showFunctions,undefined);
   // Compare against the catalog from real inspector schemas so new selectable
   // columns cannot silently ship without descriptions and examples.
   const documented = new Map(metricHelp.map(entry => [entry.metric, entry]));
@@ -105,4 +133,29 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.deepEqual(await readFile(app.jobs.path(inspection.id)), before);
   const persisted = (await openStore(data)).get();
   assert.equal(persisted.selection.inspection, inspection.id);
+});
+
+test('old treemap presets are discarded once while inspections, results and their selection survive',async t=>{
+  const dir=await temporary(t),old={inspections:[{id:'repo',name:'Keep',result:{completedAt:'2026-01-01'},repository:'/repo'}],presets:[{id:'old',name:'Old',config:{}}],selection:{inspection:'repo',preset:'old'}};
+  await writeFile(join(dir,'config.json'),JSON.stringify(old));
+  const store=await openStore(dir),state=store.get();
+  assert.deepEqual(state.inspections,old.inspections);
+  assert.equal(state.selection.inspection,'repo');
+  assert.equal(state.presets.length,1);assert.notEqual(state.presets[0].id,'old');
+  assert.equal(state.selection.preset,state.presets[0].id);
+  validatePreset(state.presets[0]);
+  await store.update(s=>{s.presets[0].name='Customized';});
+  assert.equal((await openStore(dir)).get().presets[0].name,'Customized');
+});
+
+test('server rejects invalid scoring options and unknown catalog metrics before saving',()=>{
+  const preset=defaultPreset();
+  for(const config of [
+    {...preset.config,operation:'average'}, {...preset.config,quantile:101},
+    {...preset.config,scores:[{name:'Bad',normalize:'yes',metrics:[{metric:'code_functions.count'}]}]},
+    {...preset.config,scores:[{name:'Bad',max:0,metrics:[{metric:'code_functions.count'}]}]},
+    {...preset.config,scores:[{name:'Bad',metrics:[{metric:'code_diagnostics.code'}]}]},
+  ]) assert.throws(()=>validatePreset({...preset,config}),error=>error.status===400);
+  const config={...preset.config,operation:'quantile',quantile:25,scores:[{name:'Q',normalize:false,max:80,metrics:[{metric:'code_functions.cyclomatic_complexity',min:10,aggregation:'quantile',quantile:90,factor:2}]}]};
+  assert.deepEqual(validatePreset({...preset,config}).config,config);
 });
