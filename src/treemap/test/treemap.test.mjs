@@ -462,3 +462,13 @@ test('function scores exclude file-only metrics and empty groups, support zero-s
  assert.equal((await calculateTreeMap(legacy.bytes,config)).ok,true);
  const old=await calculateTreeMap(legacy.bytes,config,{showFunctions:true});assert.equal(old.ok,false);assert.match(old.diagnostics.find(d=>d.severity==='error').message,/new inspection run/);
 });
+
+test('list scoring can include zero-area files without changing ordinary treemap omission', async t => {
+  const {bytes}=fixture(t);
+  const ordinary=await calculateTreeMap(bytes,config);
+  const all=await calculateTreeMap(bytes,config,{includeZeroArea:true});
+  assert.equal(all.ok,true,JSON.stringify(all.diagnostics));
+  assert.equal(ordinary.files.length,2);assert.equal(all.files.length,4);
+  assert.ok(all.files.some(file=>file.id==='empty.ts' && file.area===0));
+  assert.equal((await calculateTreeMap(bytes,config,{includeZeroArea:'yes'})).ok,false);
+});

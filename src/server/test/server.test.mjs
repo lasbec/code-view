@@ -81,6 +81,14 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal(detail.value.node.heat, JSON.parse(rendered.value.treeMapHtml.match(/\"heat\":([0-9.]+)/)[1]));
   assert.match(detail.value.source, /export function example/);
   assert.deepEqual(detail.value.exports.map(e => e.name), ['example']);
+  const listing = await call(`list?inspection=${inspection.id}&preset=${state.presets[0].id}`);
+  assert.equal(listing.status,200,JSON.stringify(listing.value));
+  assert.equal(listing.value.files.length,1);assert.equal(listing.value.functions.length,1);
+  assert.equal(listing.value.traitsAvailable,true);
+  assert.equal(listing.value.functions[0].is_exported,1);
+  assert.ok(listing.value.functions[0].definite>0);
+  const listItem = await call(`${detailURL}&listContext=true`);
+  assert.equal(listItem.value.node.heat,listing.value.files[0].score);
   const fn = detail.value.functions[0];
   const fnDetail = await call(`detail?inspection=${inspection.id}&preset=${state.presets[0].id}&kind=function&id=${encodeURIComponent(fn.id)}`);
   assert.equal(fnDetail.status,200,JSON.stringify(fnDetail.value));

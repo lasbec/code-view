@@ -1,6 +1,6 @@
 # Code inspection result schema
 
-SQLite, schema version `6`. See [TypeScript usage](typescript/usage.md).
+SQLite, schema version `7`. See [TypeScript usage](typescript/usage.md).
 
 ## Conventions
 
@@ -182,7 +182,7 @@ Fingerprints are recalculated each run; previous analysis results are not reused
 
 | Key | Value |
 | --- | --- |
-| `schema_version` | `6`. |
+| `schema_version` | `7`. |
 | `analyzer_version` | `1.0.0`. |
 | `typescript_version` | `5.9.3`. |
 | `tsconfig` | Absolute path to the main tsconfig. |
@@ -231,3 +231,14 @@ Targets outside inspected files remain descriptive external dependencies.
 owning function (nullable for module scope), source file, target file, expression
 name, usage kind, and location. Function usages remain in `code_function_references`.
 Re-run inspection to populate these tables in existing databases.
+
+## Function list traits (schema version 7)
+
+`code_functions` adds `visibility` (`public`, `protected`, `private`,
+`not_applicable`) and integer flags `is_static`, `is_async`, `is_generator`,
+`is_exported`. Class property function initializers inherit visibility/static
+from their property; nested callbacks do not. JavaScript `#private` methods are
+private. Async means the syntactic modifier, not simply a Promise return type.
+Exported means exported by the defining module, including aliases and default
+exports; methods of exported classes are not themselves module exports.
+Only function implementations with bodies are included, as before.

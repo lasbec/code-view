@@ -1,10 +1,11 @@
+import { mountInspectionList } from './list-view.js';
 import { showDetailRoute, closeDetail, detailHash } from './detail-view.js';
 import { metricSelect, functionAreaSelect, termHtml, scoreHtml, readScores, operationSelect, updateAggregation } from './preset-fields.js';
 import { progressHtml } from './progress-view.js';
 import { metricHelpHtml, filterMetricHelp } from './metric-help.js';
 const view = document.querySelector('#view');
 let showFunctions = false;
-let state, metrics = [], newInspection = false, newPreset = false, treeKey = '', requestNumber = 0;
+let state, metrics = [], newInspection = false, newPreset = false, treeKey = '', listKey = '', requestNumber = 0;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const route = () => location.hash.slice(1) || 'treemap';
 const lines = text => text.split('\n').map(s => s.trim()).filter(Boolean);
@@ -31,6 +32,7 @@ function render() {
   if (route().startsWith('detail?')) { showDetailRoute(api); return; }
   const hadDetail = !!document.querySelector('#detail-view');
   closeDetail();
+  if (hadDetail && listKey === currentTreeKey() && ['files', 'functions'].includes(route()) && view.querySelector(`[data-list-route="${route()}"]`)) return;
   if (hadDetail && route() === 'treemap' && document.querySelector('#map iframe')) return;
   const outputOpen = document.querySelector('#job details')?.open ?? false;
   document.body.classList.toggle('treemap-page', route() === 'treemap');
@@ -38,6 +40,7 @@ function render() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.hash === `#${route()}`));
   if (route() === 'inspections') inspectionView();
   else if (route() === 'presets') presetView();
+  else if (['files', 'functions'].includes(route())) listView();
   else if (route() === 'help') view.innerHTML = metricHelpHtml(metrics);
   else treemapView();
   const toolbar = view.querySelector('.toolbar');
@@ -45,6 +48,15 @@ function render() {
   updateProgress();
   const output = document.querySelector('#job details');
   if (output) output.open = outputOpen;
+}
+function listView() {
+  listKey = currentTreeKey();
+  const c = selectedInspection(), p = selectedPreset(), functions = route() === 'functions';
+  view.innerHTML = `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection', 'inspection')}${selection(state.presets, p?.id, 'Scoring preset', 'preset')}</div><div class="list-heading"><h1>${functions ? 'Functions' : 'Files'}</h1><p class="hint">All inspected ${functions ? 'functions' : 'files'}</p></div><section data-list-route="${route()}"></section>`;
+  const host = view.querySelector('[data-list-route]');
+  if (!c?.hasResults || !p) { host.innerHTML = '<p class="muted">Choose an inspection with results and a scoring preset.</p>'; return; }
+  mountInspectionList(host, { kind: functions ? 'function' : 'file', inspection: c, preset: p, api,
+    openDetail: hash => { history.pushState({ inspector: true }, '', hash); render(); } });
 }
 function inspectionView() {
   const c = !newInspection && selectedInspection() || { name: '', repository: '', tsconfig: 'tsconfig.json', include: [], exclude: [], commits: null };
@@ -184,7 +196,7 @@ let polling = false;
 setInterval(async () => {
   if (polling || !state) return;
   polling = true;
-  try { await load(); if (route() === 'treemap' && treeKey !== currentTreeKey()) render(); else updateProgress(); } catch (e) { notice(e); } finally { polling = false; }
+  try { await load(); if ((route() === 'treemap' && treeKey !== currentTreeKey()) || (['files', 'functions'].includes(route()) && listKey !== currentTreeKey())) render(); else updateProgress(); } catch (e) { notice(e); } finally { polling = false; }
 }, 1500);
 
 window.addEventListener('message', event => {

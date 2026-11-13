@@ -137,8 +137,9 @@ export async function calculateTreeMap(bytes, config, options = {}) {
   const diagnostics = [];
   let db;
   try {
-    keys(options, ['include', 'exclude', 'repository', 'codePrefix', 'since', 'until', 'authorIdentities', 'showFunctions'], 'Optionen');
+    keys(options, ['include', 'exclude', 'repository', 'codePrefix', 'since', 'until', 'authorIdentities', 'showFunctions', 'includeZeroArea'], 'Optionen');
     if (options.showFunctions !== undefined && typeof options.showFunctions !== 'boolean') fail('showFunctions must be a boolean.');
+    if (options.includeZeroArea !== undefined && typeof options.includeZeroArea !== 'boolean') fail('includeZeroArea must be a boolean.');
     const identities = new Map(normalizeAuthorIdentities(options.authorIdentities).flatMap(identity =>
       [identity.email, ...identity.aliases].map(email => [email, identity])));
     for (const name of ['include', 'exclude']) if (options[name] !== undefined && (!Array.isArray(options[name]) || options[name].some(p => typeof p !== 'string'))) fail(`${name} muss eine Liste von Glob-Mustern sein.`);
@@ -220,7 +221,7 @@ export async function calculateTreeMap(bytes, config, options = {}) {
     for (const file of files) {
       file.area = file.metrics[selected.area];
       file.scores = selected.scores.map((score, groupIndex) => ({ ...scoreMeasurements(score, metric => measurements.get(metric).get(file.id) ?? []), groupIndex }));
-      if (file.area <= 0) omitted.push(file.path);
+      if (file.area <= 0 && !options.includeZeroArea) omitted.push(file.path);
       else visible.push(file);
     }
     if (omitted.length) diagnostics.push({ severity: 'warning', code: 'nonpositive-area', message: `${omitted.length} Datei(en) mit Fläche ≤ 0 werden nicht dargestellt.`, paths: omitted });

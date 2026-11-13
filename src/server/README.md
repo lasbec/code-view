@@ -116,3 +116,24 @@ locations may be stale. Missing files remain inspectable through stored metrics.
 Source symlinks must resolve inside the configured repository. Open in editor uses
 VS Code's file URL handler. Run inspection again to collect exact imports,
 non-function symbol usages, exports and signatures from schema version 6.
+
+## Files and Functions
+
+The Files and Functions navigation entries show all inspected items in compact,
+sortable tables, independently of treemap path filters or rectangle size.
+The selected inspection and scoring preset are shared across views. Both lists
+score the same complete file/function population; search and filters preserve
+those scores. Opening a row preserves that scoring context in its detail view.
+Back restores the list's searches, selected filters, sorting, page and scroll.
+
+Functions has separate case-insensitive name/path and signature searches; both
+searches must match. One multiselect combines kinds, visibility, static, async,
+exported and generator traits with **OR**. With no selection all functions appear.
+Selected chips can be removed individually or cleared together. Legacy inspection
+results keep kind filtering and show a reinspection notice for missing traits.
+Lists sort by descending score initially, keep unscored items last in both
+sort directions, and display 100 rows per page. Counts cover all matching items.
+Mutation columns count definite/possible static mutation occurrences, excluding
+objects created locally in the function. File complexity sums function cyclomatic
+complexity. Rows are fetched once per inspection-result/preset context; searches,
+filters, pagination and sorting run locally without re-reading source files.

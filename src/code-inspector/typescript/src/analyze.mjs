@@ -64,7 +64,17 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
         let container = n.parent;
         while (container && !ts.isClassLike(container)) container = container.parent;
         if (container?.name && (ts.isMethodDeclaration(n) || ts.isConstructorDeclaration(n) || ts.isAccessor(n))) name = `${container.name.text}.${name}`;
+        let modifierOwner = n;
+        let wrapped = n;
+        while (wrapped.parent && (ts.isParenthesizedExpression(wrapped.parent) || ts.isAsExpression(wrapped.parent) || ts.isSatisfiesExpression(wrapped.parent))) wrapped = wrapped.parent;
+        if (ts.isPropertyDeclaration(wrapped.parent) && wrapped.parent.initializer === wrapped) modifierOwner = wrapped.parent;
+        const classMember = ts.isClassLike(modifierOwner.parent);
+        const modifiers = ts.getCombinedModifierFlags(modifierOwner);
+        const visibility = !classMember ? 'not_applicable' : modifierOwner.name && ts.isPrivateIdentifier(modifierOwner.name) || modifiers & ts.ModifierFlags.Private ? 'private' : modifiers & ts.ModifierFlags.Protected ? 'protected' : 'public';
         const row = { id, file_id: entry.path, parent_function_id: nearestFunction(n) ? nodeId(nearestFunction(n)) : null, name, kind: ts.SyntaxKind[n.kind], ...pos,
+          visibility, is_static: Number(classMember && !!(modifiers & ts.ModifierFlags.Static)),
+          is_async: Number(!!(ts.getCombinedModifierFlags(n) & ts.ModifierFlags.Async)),
+          is_generator: Number(!!n.asteriskToken), is_exported: 0,
           signature: checker.getSignatureFromDeclaration(n) ? checker.signatureToString(checker.getSignatureFromDeclaration(n)) : name, end_line: sf.getLineAndCharacterOfPosition(n.end - 1).line + 1, ...metrics, termination: 'unknown', termination_reason: null };
         if (!changed) Object.assign(row, cached.functions.find(f => f.id === id) ?? { unsafe: true });
         byNode.set(n, row); byId.set(id, row);
@@ -77,7 +87,16 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
     if (!changed) { onIndexed(++indexed, project.files.length); continue; }
     const module = checker.getSymbolAtLocation(sf);
     const exports = module ? checker.getExportsOfModule(module) : [];
-    for (const exported of exports) result.exports.push({ file_id: entry.path, name: exported.name });
+    for (let exported of exports) {
+      result.exports.push({ file_id: entry.path, name: exported.name });
+      if (exported.flags & ts.SymbolFlags.Alias) exported = checker.getAliasedSymbol(exported);
+      for (const declaration of exported.declarations ?? []) {
+        const direct = isFunction(declaration) ? [declaration] : declaration.initializer && isFunction(unwrap(declaration.initializer)) ? [unwrap(declaration.initializer)] : targets(checker, declaration.expression ?? declaration.name);
+        for (const target of direct) {
+          if (target.getSourceFile() === sf && byNode.has(target)) byNode.get(target).is_exported = 1;
+        }
+      }
+    }
     const exportedVars = new Set(exports.flatMap(s => {
       if (s.flags & ts.SymbolFlags.Alias) s = checker.getAliasedSymbol(s);
       return (s.declarations ?? []).filter(d => (ts.isVariableDeclaration(d) || ts.isBindingElement(d)) && d.getSourceFile() === sf && !nearestFunction(d)).map(nodeId);

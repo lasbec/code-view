@@ -14,9 +14,9 @@ async function body(req) {
   for await (const chunk of req) { text += chunk; check(Buffer.byteLength(text) <= 262144, 'Request is too large.'); }
   try { return JSON.parse(text); } catch { check(false, 'Invalid JSON.'); }
 }
-function render(path, preset, detail = false) {
+function render(path, preset, detail = false, list = false) {
   return new Promise((accept, reject) => {
-    const worker = new Worker(new URL('./render-worker.mjs', import.meta.url), { workerData: { path, preset, detail } });
+    const worker = new Worker(new URL('./render-worker.mjs', import.meta.url), { workerData: { path, preset, detail, list } });
     const timer = setTimeout(() => { worker.terminate(); reject(new Error('Treemap calculation timed out.')); }, 120000);
     worker.once('message', result => { clearTimeout(timer); accept(result); });
     worker.once('error', error => { clearTimeout(timer); reject(error); });
@@ -79,6 +79,13 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         check(['true', 'false'].includes(showFunctions), 'Invalid function view flag.');
         return send(await render(jobs.path(c.id), { ...p, options: { ...p.options, showFunctions: showFunctions === 'true', authorIdentities: c.authorIdentities ?? [] } }));
       }
+      if (req.method === 'GET' && url.pathname === '/api/list') {
+        const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
+        const p = state.presets.find(c => c.id === url.searchParams.get('preset'));
+        check(c && p && usable(jobs.path(c.id)), 'Choose an inspection with results and a preset.');
+        const options = { ...p.options, include: [], exclude: [], showFunctions: true, includeZeroArea: true, authorIdentities: c.authorIdentities ?? [] };
+        return send(await render(jobs.path(c.id), { ...p, options }, false, true));
+      }
       if (req.method === 'GET' && url.pathname === '/api/detail') {
         const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
         const p = state.presets.find(c => c.id === url.searchParams.get('preset'));
@@ -86,11 +93,12 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         const kind = url.searchParams.get('kind');
         check(['file', 'function'].includes(kind), 'Invalid item kind.');
         const options = { ...p.options, showFunctions: url.searchParams.get('showFunctions') === 'true', authorIdentities: c.authorIdentities ?? [] };
+        if (url.searchParams.get('listContext') === 'true') Object.assign(options, { include: [], exclude: [], showFunctions: true, includeZeroArea: true });
         const result = await render(jobs.path(c.id), { ...p, options }, true);
         check(result.model?.ok, result.error || 'Unable to calculate scores.');
         return send(await inspectDetail(jobs.path(c.id), { ...c, preset: p }, url.searchParams.get('id'), kind, result.model, result.expanded));
       }
-      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/detail-view.js': ['detail-view.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/metric-help.js': ['metric-help.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/preset-fields.js': ['preset-fields.js', 'text/javascript'], '/treemap/src/catalog.mjs': ['../../treemap/src/catalog.mjs', 'text/javascript'] };
+      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/detail-view.js': ['detail-view.js', 'text/javascript'], '/list-view.js': ['list-view.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/metric-help.js': ['metric-help.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/preset-fields.js': ['preset-fields.js', 'text/javascript'], '/treemap/src/catalog.mjs': ['../../treemap/src/catalog.mjs', 'text/javascript'] };
       if (req.method === 'GET' && assets[url.pathname]) { const [file, type] = assets[url.pathname]; return send(await readFile(new URL(`./public/${file}`, import.meta.url), 'utf8'), 200, type); }
       send({ error: 'Not found.' }, 404);
     } catch (error) { send({ error: error.message }, error.status ?? 500); }

@@ -11,7 +11,7 @@ CREATE TABLE code_files (
 CREATE TABLE code_functions (
  id TEXT PRIMARY KEY, file_id TEXT REFERENCES code_files(id), parent_function_id TEXT REFERENCES code_functions(id) DEFERRABLE INITIALLY DEFERRED,
  source_size_bytes INTEGER, exclusive_size_bytes INTEGER, exclusive_effective_lines INTEGER,
- name TEXT, signature TEXT, kind TEXT, line INTEGER, column INTEGER, end_line INTEGER,
+ name TEXT, signature TEXT, kind TEXT, visibility TEXT, is_static INTEGER, is_async INTEGER, is_generator INTEGER, is_exported INTEGER, line INTEGER, column INTEGER, end_line INTEGER,
  total_lines INTEGER, blank_lines INTEGER, comment_lines INTEGER, lines_with_comments INTEGER, effective_lines INTEGER,
  max_nesting INTEGER, cyclomatic_complexity INTEGER, cognitive_complexity INTEGER,
  termination TEXT CHECK(termination IN ('terminates','unknown')), termination_reason TEXT, termination_candidate INTEGER, shadowing_count INTEGER
@@ -64,7 +64,7 @@ export function openDatabase(output, project) {
     for (const index of ['code_calls_caller', 'code_calls_target', 'code_accesses_function', 'code_references_target']) db.exec(`DROP INDEX IF EXISTS ${index}`);
     for (const table of ['code_symbol_references', 'code_imports', 'code_exports', 'code_accesses', 'code_shadowing', 'code_parameters', 'code_calls', 'code_function_references', 'code_file_state', 'code_functions', 'code_files', 'code_diagnostics', 'code_metadata']) db.exec(`DROP TABLE IF EXISTS ${table}`);
     db.exec(schema);
-    db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('schema_version', '6');
+    db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('schema_version', '7');
     db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('tsconfig', project.configPath);
     return db;
   } catch (error) { db.close(); throw error; }

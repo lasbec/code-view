@@ -207,7 +207,7 @@ test('stores actual UTF-8 file size in bytes, including BOM and CRLF', t => {
  assert.equal(result.files[0].size_bytes,Buffer.byteLength(text));
  const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
  assert.equal(db.prepare('SELECT size_bytes FROM code_files').get().size_bytes,readFileSync(path.join(dir,'size.ts')).length);
- assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'6');
+ assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'7');
 });
 
 test('iteration targets and destructuring defaults are writes; branch aliases retain possible origins', t => {
@@ -255,4 +255,34 @@ test('stores exact imports, reexports, dynamic imports and signatures without so
  assert.deepEqual(imports.map(row=>row.kind),['import','reexport','dynamic']);
  assert.match(db.prepare("SELECT signature FROM code_functions WHERE name='leaf'").get().signature,/number/);
  assert.ok(db.prepare("SELECT name FROM code_exports WHERE file_id='a.ts'").all().some(row=>row.name==='leaf'));
+});
+
+test('function traits track class property modifiers without leaking into callbacks and resolve defining-file exports', t => {
+ const {dir,args}=fixture(t, {'a.ts':`
+ export async function exported() { return 1; }
+ export const arrow = async () => 1;
+ function local() {} export { local as alias };
+ export default function* generator() { yield 1; }
+ class Example {
+   private static work = async () => { const inner = () => 1; return inner(); };
+   protected method() {}
+   #secret() {}
+   plain() {}
+   get value() { return 1; }
+   constructor() {}
+ }
+ const object = { method() {} };
+ abstract class Abstract { abstract noBody(): void; }
+ `});
+ main(args);const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
+ const functions=db.prepare('SELECT * FROM code_functions').all(),get=name=>functions.find(f=>f.name===name);
+ assert.equal(get('exported').is_async,1);assert.equal(get('exported').is_exported,1);
+ assert.equal(get('arrow').is_exported,1);assert.equal(get('local').is_exported,1);
+ assert.equal(get('generator').is_generator,1);assert.equal(get('generator').is_exported,1);
+ assert.equal(get('work').visibility,'private');assert.equal(get('work').is_static,1);assert.equal(get('work').is_async,1);
+ assert.equal(get('inner').visibility,'not_applicable');assert.equal(get('inner').is_static,0);assert.equal(get('inner').is_async,0);
+ assert.equal(get('Example.method').visibility,'protected');assert.equal(get('Example.#secret').visibility,'private');
+ assert.equal(get('Example.plain').visibility,'public');assert.equal(get('Example.value').visibility,'public');
+ assert.equal(get('method').visibility,'not_applicable');assert.equal(get('method').is_exported,0);
+ assert.ok(!functions.some(f=>f.name.includes('noBody')));
 });
