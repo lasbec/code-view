@@ -50,7 +50,7 @@ class Git:
 
 SCHEMA = [
     """CREATE TABLE git_inspector_schema (version INTEGER NOT NULL)""",
-    "INSERT INTO git_inspector_schema VALUES (1)",
+    "INSERT INTO git_inspector_schema VALUES (2)",
     """CREATE TABLE git_repositories (
         id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE)""",
     """CREATE TABLE git_commits (
@@ -69,6 +69,7 @@ SCHEMA = [
         repository_id INTEGER NOT NULL, commit_hash TEXT NOT NULL,
         position INTEGER NOT NULL, change_type TEXT NOT NULL,
         old_path TEXT, path TEXT NOT NULL, similarity INTEGER,
+        lines_added INTEGER, lines_deleted INTEGER, churn INTEGER, is_binary INTEGER,
         PRIMARY KEY (repository_id, commit_hash, position),
         FOREIGN KEY (repository_id, commit_hash) REFERENCES git_commits ON DELETE CASCADE)""",
     """CREATE TABLE git_branches (
@@ -113,8 +114,14 @@ def ensure_schema(db):
             raise InspectionError('Existing objects conflict with inspector schema: ' + ', '.join(sorted(collisions)))
         for statement in SCHEMA:
             db.execute(statement)
-    elif db.execute('SELECT version FROM git_inspector_schema').fetchall() != [(1,)]:
-        raise InspectionError('Unsupported git-inspector schema version')
+    else:
+        version = db.execute('SELECT version FROM git_inspector_schema').fetchall()
+        if version == [(1,)]:
+            for column in ('lines_added', 'lines_deleted', 'churn', 'is_binary'):
+                db.execute(f'ALTER TABLE git_file_changes ADD COLUMN {column} INTEGER')
+            db.execute('UPDATE git_inspector_schema SET version=2')
+        elif version != [(2,)]:
+            raise InspectionError('Unsupported git-inspector schema version')
 
 
 def file_changes(git, commit, parents):
@@ -132,6 +139,28 @@ def file_changes(git, commit, parents):
             old_path, path = path, decode(tokens[index])
             index += 1
         yield status[0], old_path, path, int(status[1:]) if status[1:] else None
+
+
+def update_churn(db, git, repo_id, commit, parents):
+    args = ['diff-tree', '--no-commit-id', '--numstat', '-z', '-r',
+            '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '-M50%']
+    args += [parents[0], commit] if parents else ['--root', commit]
+    tokens = git.run(*args).stdout.split(b'\0')
+    index = 0
+    while index < len(tokens) and tokens[index]:
+        added, deleted, raw_path = tokens[index].split(b'\t', 2)
+        index += 1
+        # Renames use an empty path followed by NUL-separated old and new paths.
+        if not raw_path:
+            raw_path = tokens[index + 1]
+            index += 2
+        binary = added == b'-' or deleted == b'-'
+        additions, deletions = (None, None) if binary else (int(added), int(deleted))
+        churn = None if binary else additions + deletions
+        db.execute('''UPDATE git_file_changes
+            SET lines_added=?, lines_deleted=?, churn=?, is_binary=?
+            WHERE repository_id=? AND commit_hash=? AND path=?''',
+            (additions, deletions, churn, int(binary), repo_id, commit, decode(raw_path)))
 
 
 def parse_merge(output):
@@ -234,6 +263,12 @@ def inspect(repo, branch, output, limit, mode, progress=None):
             for completed, raw_hash in enumerate(commits, 1):
                 commit = raw_hash.decode('ascii')
                 if db.execute('SELECT 1 FROM git_commits WHERE repository_id=? AND hash=?', (repo_id, commit)).fetchone():
+                    if db.execute('''SELECT 1 FROM git_file_changes
+                            WHERE repository_id=? AND commit_hash=? AND is_binary IS NULL LIMIT 1''',
+                            (repo_id, commit)).fetchone():
+                        parents = [row[0] for row in db.execute('''SELECT parent_hash FROM git_commit_parents
+                            WHERE repository_id=? AND commit_hash=? ORDER BY position''', (repo_id, commit))]
+                        update_churn(db, git, repo_id, commit, parents)
                     progress('processing', completed, len(commits))
                     continue
                 metadata = git.run('show', '-s', '--no-show-signature',
@@ -245,7 +280,10 @@ def inspect(repo, branch, output, limit, mode, progress=None):
                 for position, parent in enumerate(parents):
                     db.execute('INSERT INTO git_commit_parents VALUES (?,?,?,?)', (repo_id, commit, position, parent))
                 for position, change in enumerate(file_changes(git, commit, parents)):
-                    db.execute('INSERT INTO git_file_changes VALUES (?,?,?,?,?,?,?)', (repo_id, commit, position, *change))
+                    db.execute('''INSERT INTO git_file_changes
+                        (repository_id,commit_hash,position,change_type,old_path,path,similarity)
+                        VALUES (?,?,?,?,?,?,?)''', (repo_id, commit, position, *change))
+                update_churn(db, git, repo_id, commit, parents)
                 if len(parents) > 1:
                     status, files, conflicts, error = analyze_merge(git, parents, Path(temporary))
                     db.execute('INSERT INTO git_merge_analysis VALUES (?,?,?,?,?,?)',

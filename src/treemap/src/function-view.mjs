@@ -2,7 +2,7 @@ import { functionMetrics } from './catalog.mjs';
 import { aggregate, scoreMeasurements } from './scoring.mjs';
 
 // All source queries use fixed, catalog-owned SQL. File-only metrics never enter
-// function scoring, and child events are grouped by their actual owning function.
+// function scoring. Events use their owning function, or their target for incoming references.
 export function attachFunctions(db, files, selected, catalog, query) {
   const columns = table => new Set(query(db, `PRAGMA table_info(${table})`).map(c => c.name));
   if (!columns('code_files').has('outside_size_bytes') || !['exclusive_size_bytes', 'exclusive_effective_lines'].every(c => columns('code_functions').has(c))) {
@@ -15,7 +15,7 @@ export function attachFunctions(db, files, selected, catalog, query) {
   const needed = new Set([selected.functionArea, ...selected.scores.flatMap(score => score.metrics.map(term => term.metric)).filter(metric => functionMetrics.has(metric))]);
   for (const metric of needed) {
     const source = catalog.get(metric);
-    const owner = source.table === 'code_functions' ? 't.id' : source.table === 'code_calls' ? 't.caller_id' : 't.function_id';
+    const owner = source.functionOwner ?? (source.table === 'code_functions' ? 't.id' : source.table === 'code_calls' ? 't.caller_id' : 't.function_id');
     for (const row of query(db, `SELECT ${owner} AS owner, ${source.expression} AS value FROM ${source.from}`, source.params)) {
       const values = measurements.get(row.owner);
       if (!values || row.value == null) continue;

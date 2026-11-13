@@ -45,8 +45,10 @@ for (const [field, label, description] of [
 ]) add('code_accesses', field, label, description);
 count('code_calls', 'Call sites', 'Calls and constructor sites, including module scope and unresolved calls.');
 count('code_function_references', 'Function references', 'Recorded function uses, including calls, arguments, assignments and returns.');
+add('code_function_references', 'incoming_count', 'Incoming references', 'Reference sites targeting this function, or functions in this file, including calls, arguments, assignments and returns. Counts occurrences, including self-references; unresolved targets are excluded.', { aggregation: 'count', aggregations: ['count'], counter: true });
 count('code_diagnostics', 'Compiler diagnostics', 'Semantic diagnostics associated with inspected files; not runtime failures.');
 count('git_file_changes', 'Git file changes', 'File-change events, including merge diffs against the first parent. Renames are not followed.');
+add('git_file_changes', 'churn', 'Code churn', 'Added plus deleted lines across imported file changes. Replacing a line counts twice. Includes root commits and merge diffs against the first parent; binary changes have no line count.');
 add('git_commits', 'is_merge', 'Merge integrations', 'Merge commits changing this path against the first parent; not proof of editing or conflict resolution.');
 count('git_merge_conflict_files', 'Reconstructed conflicting merges', 'Reconstructed merges reporting unresolved stages for this path; not proof of historical conflicts.');
 count('git_merge_conflicts', 'Reconstructed conflict messages', 'Structured conflict messages associated with this path; several can occur in one merge.');

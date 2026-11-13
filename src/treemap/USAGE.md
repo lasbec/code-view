@@ -60,6 +60,25 @@ threshold 0 counts every event. The quantile parameter is 0–100 (default 50).
 Quantiles use linear interpolation at index `(n - 1) * quantile / 100` in sorted
 values. Thus 0 is minimum, 50 median and 100 maximum.
 
+`Incoming references` (`code_function_references.incoming_count`) counts reference
+sites targeting a function, matching its detail view's Incoming references count.
+At file level it counts references to all functions defined in that file.
+Repeated uses and self-references count separately; unresolved targets are excluded.
+References from inspected files outside the visible path filters still count.
+Use aggregation `count` and threshold 0. This metric is also available for function
+tile sizing and works with existing inspections containing function references.
+`Function references` (`code_function_references.count`) continues to count uses
+at their source instead.
+
+`Code churn` (`git_file_changes.churn`) measures the intensity of file changes:
+added plus deleted lines, summed over imported changes. Choose aggregation `sum`
+and threshold 0 for total churn; replacing one line contributes 2. Repository and
+date filters apply as for Git file changes. Merge changes compare against their
+first parent; root commits include initial lines. Binary or not yet backfilled
+changes have missing values and produce warnings. Run the Git inspector again to
+populate this metric in existing results. It is available for file scores and
+file sizing; Git history is not attributed to individual functions.
+
 Weighted contributions are added within each group. Each group is capped at
 its `max`, even when normalization is disabled. A blank/omitted `max` uses the
 largest raw group score among displayed files. Explicit group maxima must be

@@ -91,6 +91,12 @@ function sources(db, options) {
     const columns = new Set(rows(db, `PRAGMA table_info(${quote(source.table)})`).map(column => column.name));
     for (const entry of metricById.values()) {
       const [table, field] = entry.metric.split('.');
+      if (table === source.table && field === 'incoming_count') {
+        catalog.set(entry.metric, { ...entry, ...source, file: 'target.file_id',
+          from: `${source.from} JOIN code_functions target ON target.id=t.target_id`,
+          functionOwner: 't.target_id', expression: '1' });
+        continue;
+      }
       if (table !== source.table || field !== 'count' && !columns.has(field)) continue;
       catalog.set(entry.metric, { ...entry, ...source, expression: field === 'count' ? '1' : `t.${quote(field)}` });
     }

@@ -1,6 +1,7 @@
 # Git inspection result schema
 
-SQLite, schema version `1`. See [usage](usage.md).
+SQLite, schema version `2`. Version 1 is migrated automatically; line statistics
+are backfilled for commits selected by subsequent imports. See [usage](usage.md).
 
 ## Conventions and relationships
 
@@ -19,7 +20,7 @@ SQLite, schema version `1`. See [usage](usage.md).
 
 | Field | Type | Content |
 | --- | --- | --- |
-| `version` | INTEGER | Schema version; exactly one row containing `1`. |
+| `version` | INTEGER | Schema version; exactly one row containing `2`. |
 
 ## `git_repositories`
 
@@ -81,6 +82,10 @@ PK: `(repository_id, commit_hash, position)`. FK: commit reference.
 | `old_path` | TEXT ? | Previous path for a rename or copy; otherwise `NULL`. |
 | `path` | TEXT | Affected path; destination path for a rename or copy. |
 | `similarity` | INTEGER ? | Git similarity/status percentage if supplied; otherwise `NULL`. |
+| `lines_added` | INTEGER ? | Added lines reported by Git numstat; `NULL` for binary or not yet backfilled changes. |
+| `lines_deleted` | INTEGER ? | Deleted lines reported by Git numstat; `NULL` for binary or not yet backfilled changes. |
+| `churn` | INTEGER ? | `lines_added + lines_deleted`; replacing one line counts twice. `NULL` for binary or not yet backfilled changes. |
+| `is_binary` | INTEGER ? | `1` for Git numstat binary changes, `0` for numeric statistics; `NULL` until backfilled. |
 
 | Comparison | Rule |
 | --- | --- |
@@ -88,7 +93,8 @@ PK: `(repository_id, commit_hash, position)`. FK: commit reference.
 | Root commit | Against the empty tree. |
 | Merge | Against the first parent commit. |
 | Rename | Git heuristic with 50% minimum similarity; no persistent file identity. |
-| Binary file/submodule | Path change only; no content or recursive submodule import. |
+| Binary file | Path change with `is_binary=1`; line counts and churn are `NULL`. |
+| Submodule | Git's numstat pointer-change counts; no recursive submodule import. |
 
 ## `git_merge_analysis`
 

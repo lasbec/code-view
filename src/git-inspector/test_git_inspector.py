@@ -68,6 +68,37 @@ class ImportTests(unittest.TestCase):
         self.run_import()
         self.assertEqual(self.query("SELECT change_type, old_path, path FROM git_file_changes ORDER BY change_type"),
                          [('A', None, old), ('D', None, new), ('R', old, new)])
+        self.assertEqual(self.query('SELECT change_type, lines_added, lines_deleted, churn FROM git_file_changes ORDER BY change_type'),
+                         [('A', 1, 0, 1), ('D', 0, 1, 1), ('R', 0, 0, 0)])
+
+    def test_churn_counts_edits_and_binary_changes(self):
+        self.commit('text.txt', 'one\ntwo\nthree\n')
+        self.commit('text.txt', 'one\nchanged\nthree\nfour\n')
+        (self.repo / 'binary.dat').write_bytes(b'\x00\x01\x02')
+        self.git('add', '--all')
+        self.git('commit', '-m', 'binary')
+        self.run_import()
+        self.assertEqual(self.query('''SELECT lines_added, lines_deleted, churn, is_binary
+            FROM git_file_changes WHERE path='text.txt' ORDER BY lines_deleted'''),
+                         [(3, 0, 3, 0), (2, 1, 3, 0)])
+        self.assertEqual(self.query("SELECT lines_added, lines_deleted, churn, is_binary FROM git_file_changes WHERE path='binary.dat'"),
+                         [(None, None, None, 1)])
+
+    def test_v1_migration_backfills_selected_commits_on_append(self):
+        self.commit('one', 'one\n')
+        self.commit('two', 'two\nthree\n')
+        self.run_import()
+        with sqlite3.connect(self.output) as db:
+            for column in ('lines_added', 'lines_deleted', 'churn', 'is_binary'):
+                db.execute(f'ALTER TABLE git_file_changes DROP COLUMN {column}')
+            db.execute('UPDATE git_inspector_schema SET version=1')
+        self.assertEqual(self.run_import(limit=1), (1, 0, 0))
+        self.assertEqual(self.query('SELECT version FROM git_inspector_schema'), [(2,)])
+        self.assertEqual(self.query('SELECT path,churn FROM git_file_changes ORDER BY path'), [('one', None), ('two', 2)])
+        self.assertEqual(self.run_import(), (2, 0, 0))
+        self.assertEqual(self.query('SELECT path,churn FROM git_file_changes ORDER BY path'), [('one', 1), ('two', 2)])
+        with patch.object(inspector, 'update_churn', side_effect=AssertionError('already recorded')):
+            self.assertEqual(self.run_import(), (2, 0, 0))
 
     def test_conflict_reconstruction_preserves_source(self):
         self.commit('conflict.txt', 'base\n')
@@ -88,6 +119,7 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(self.query('SELECT path FROM git_merge_conflict_files'), [('conflict.txt',)])
         self.assertEqual(self.query('SELECT conflict_type FROM git_merge_conflicts'), [('CONFLICT (contents)',)])
         self.assertEqual(self.query(f"SELECT path FROM git_file_changes WHERE commit_hash='{merge}'"), [('conflict.txt',)])
+        self.assertEqual(self.query(f"SELECT lines_added,lines_deleted,churn FROM git_file_changes WHERE commit_hash='{merge}'"), [(1, 1, 2)])
         self.assertEqual(self.git('status', '--porcelain', '-z').stdout, status_before)
         self.assertEqual((self.repo / '.git/index').read_bytes(), index_before)
         self.assertEqual(sorted(str(p.relative_to(self.repo)) for p in (self.repo / '.git/objects').rglob('*')), objects_before)

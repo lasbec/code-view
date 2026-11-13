@@ -54,6 +54,30 @@ test('thresholds individual measurements, caps groups and combines scores; joins
   assert.ok(metrics.some(m => m.metric === 'git_merge_conflict_files.count'));
 });
 
+test('code churn sums changed lines with thresholds and repository/date filters; older databases omit the metric', async t => {
+  const {input,bytes}=fixture(t),metric='git_file_changes.churn';
+  assert.ok(!(await listMetrics(bytes)).some(m=>m.metric===metric));
+  const db=new DatabaseSync(input);
+  db.exec(`ALTER TABLE git_file_changes ADD COLUMN churn INTEGER;
+    UPDATE git_file_changes SET churn=10 WHERE commit_hash='a';
+    UPDATE git_file_changes SET churn=30 WHERE commit_hash='b';
+    UPDATE git_file_changes SET churn=999 WHERE repository_id=2;
+    UPDATE git_file_changes SET churn=NULL WHERE path='packages/app/src/b.ts';`);
+  db.close();
+  const updated=readFileSync(input);
+  assert.equal((await listMetrics(updated)).find(m=>m.metric===metric).aggregation,'sum');
+  const config={scores:[{normalize:false,metrics:[{metric}]}]};
+  const r=await calculateTreeMap(updated,config);
+  assert.equal(r.ok,true,JSON.stringify(r.diagnostics));
+  assert.deepEqual(r.files.map(f=>f.heat),[40,0]);
+  assert.ok(r.diagnostics.some(d=>d.code==='missing-values'));
+  const filtered=await calculateTreeMap(updated,config,{since:'2026-01-15',include:['**/a.ts']});
+  assert.equal(filtered.ok,true);
+  assert.deepEqual(filtered.files.map(f=>f.heat),[30]);
+  const threshold=await calculateTreeMap(updated,{scores:[{normalize:false,metrics:[{metric,min:10}]}]});
+  assert.equal(threshold.files[0].heat,20);
+});
+
 test('avoids multiplication of joined child rows and applies date/glob filters before the legend', async t => {
   const { bytes } = fixture(t);
   const c = { operation: 'product', area: 'code_files.total_lines', scores: [{ normalize: false, metrics: [{ metric: 'code_parameters.mutation_count' }] }, { normalize: false, metrics: [{ metric: 'git_file_changes.count' }] }] };
@@ -420,6 +444,38 @@ function functionFixture(t) {
  UPDATE code_functions SET exclusive_size_bytes=100 WHERE id='f3';`);db.close();
  return {...data,bytes:readFileSync(data.input)};
 }
+
+test('incoming references count target occurrences for files and functions, including sources outside the visible scope', async t => {
+ const {input}=functionFixture(t),db=new DatabaseSync(input);
+ db.exec(`CREATE TABLE code_function_references(file_id TEXT,function_id TEXT,target_id TEXT,kind TEXT);
+ INSERT INTO code_function_references VALUES
+ ('src/b.ts','f3','f1','call'),('src/b.ts','f3','f1','argument'),
+ ('src/a.ts','f1','f1','call'),('src/a.ts',NULL,'f2','assignment'),
+ ('src/a.ts','f2','f3','return'),('src/a.ts','f1',NULL,'call'),
+ ('src/a.ts','f1','missing','call');`);
+ db.close();
+ const bytes=readFileSync(input),metric='code_function_references.incoming_count';
+ const catalog=await listMetrics(bytes);
+ assert.equal(catalog.find(m=>m.metric===metric).label,'Incoming references');
+ const config={functionArea:metric,scores:[{normalize:false,metrics:[{metric}]}]};
+ const r=await calculateTreeMap(bytes,config,{showFunctions:true});
+ assert.equal(r.ok,true,JSON.stringify(r.diagnostics));
+ const a=r.files.find(f=>f.id==='src/a.ts'),b=r.files.find(f=>f.id==='src/b.ts');
+ assert.equal(a.metrics[metric],4);assert.equal(a.heat,4);
+ assert.equal(b.metrics[metric],1);assert.equal(b.heat,1);
+ assert.deepEqual(a.children.filter(f=>f.kind==='function').map(f=>[f.id,f.metrics[metric],f.heat]),[['f1',3,3],['f2',1,1]]);
+ assert.equal(a.children[0].area/a.children[1].area,3);
+ const filtered=await calculateTreeMap(bytes,config,{showFunctions:true,include:['**/a.ts']});
+ assert.equal(filtered.ok,true);
+ assert.equal(filtered.files[0].heat,4);
+ assert.equal(filtered.files[0].children[0].heat,3);
+ const outgoing=await calculateTreeMap(bytes,{scores:[{normalize:false,metrics:[{metric:'code_function_references.count'}]}]},{showFunctions:true});
+ assert.equal(outgoing.ok,true);
+ assert.equal(outgoing.files.find(f=>f.id==='src/a.ts').heat,5);
+ assert.equal(outgoing.files.find(f=>f.id==='src/b.ts').heat,2);
+ const absent=await listMetrics(functionFixture(t).bytes);
+ assert.ok(!absent.some(m=>m.metric===metric));
+});
 
 test('function view preserves file areas, distributes exclusive sizes and shares normalization with file borders',async t=>{
  const {bytes}=functionFixture(t);

@@ -39,7 +39,10 @@ See the [result schema](git-inspection-result-schema.md) for tables, fields and 
 Commit messages, diffs and file contents are not stored.
 The console reports selected and newly imported commits, new unknown merge analyses and the output path.
 
-`append` does not recalculate existing commits or merge analyses.
+`append` does not recalculate existing commits or merge analyses, except to fill
+missing line statistics for selected commits after upgrading a version 1 database.
+The schema is migrated automatically in the import transaction. Commits outside
+the selection retain missing statistics until selected by a later import.
 The total may exceed N commits, including commits from multiple branches or rewritten history.
 `replace` removes all data for the selected repository, including previous branch entries and merge analyses.
 Use it to recalculate merge analyses after a Git update, for example.
@@ -52,6 +55,15 @@ The inspected repository's working tree, index, branches and object store remain
 Merge reconstruction uses temporary Git objects and does not prove historical conflicts or their resolution.
 The Git version, attributes and merge configuration can affect the result.
 Exit codes: `0` success or help, `1` runtime error, `2` invalid CLI arguments.
+
+## Code churn
+
+Each file change records added and deleted lines from Git numstat and their sum
+as `churn`. Replacing a line counts as one deletion plus one addition. Root commits
+compare against an empty tree; merges compare against their first parent. Pure
+renames have zero churn. Changes belong to their recorded path; rename history
+is not followed. Binary changes have no line counts and use `NULL`, not zero.
+Only statistics are stored, without diffs or file contents.
 
 ## Progress events
 
