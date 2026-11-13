@@ -15,6 +15,7 @@ export function mountTreeMap(host, model) {
   const labels = document.createElement('div'); labels.className = 'labels';
   const scale = model.legend;
   let scaleChanged = false;
+  let authorMode = false;
   const percent = value => scale.max === scale.min ? 0 : 100 * (value - scale.min) / (scale.max - scale.min);
   // CSS variables keep the mounted map in sync with theme changes without rebuilding it.
   // Standalone snippets retain the colors calculated by the data API.
@@ -26,6 +27,7 @@ export function mountTreeMap(host, model) {
     [scale.max, 'var(--cv-heat-violet,rgb(135,55,190))'],
   ];
   function heatColor(node) {
+    if (authorMode) return node.mainAuthor?.color ?? '#c9d0d8';
     if (!themedHeat && !scaleChanged) return node.color ?? '#c9d0d8';
     if (node.heat == null) return 'var(--cv-heat-neutral,#c9d0d8)';
     const value = Math.max(scale.min, Math.min(scale.max, node.heat));
@@ -49,6 +51,17 @@ export function mountTreeMap(host, model) {
     return heatStops.at(-1)[1];
   }
   function drawLegend() {
+    if (authorMode) {
+      labels.replaceChildren(); bar.style.background = 'none'; bar.style.height = 'auto';
+      bar.replaceChildren();
+      for (const author of [...(model.authors ?? []), { name: 'Unknown author', color: '#c9d0d8' }]) {
+        const entry = document.createElement('span'); entry.style.cssText = 'display:inline-block;margin:4px 10px 4px 0';
+        const swatch = document.createElement('span'); swatch.style.cssText = `display:inline-block;width:12px;height:12px;margin-right:4px;background:${author.color}`;
+        entry.append(swatch, document.createTextNode(author.name)); bar.append(entry);
+      }
+      return;
+    }
+    bar.replaceChildren(); bar.style.height = '10px';
     [scale.min, scale.yellowFrom, scale.redFrom, scale.max].forEach((value,i) => { heatStops[i][0] = value; });
     labels.replaceChildren();
     bar.style.background = scale.max === scale.min ? heatStops[0][1] : `linear-gradient(to right,${heatStops[0][1]},${heatStops[1][1]} ${percent(scale.yellowFrom)}%,${heatStops[2][1]} ${percent(scale.redFrom)}%,${heatStops[3][1]})`;
@@ -103,6 +116,12 @@ export function mountTreeMap(host, model) {
     apply.disabled = auto.disabled = false;
     status.textContent = event.data.error || 'Saved'; status.classList.toggle('error', !!event.data.error);
   });
+  if (model.authors) {
+    const colorLabel = element('label', 'Color by '), colorSelect = document.createElement('select');
+    for (const [value,text] of [['score','Score'],['author','Main author']]) { const option = document.createElement('option'); option.value=value; option.textContent=text; colorSelect.append(option); }
+    colorSelect.setAttribute('aria-label','Color by'); colorSelect.onchange=()=>{authorMode=colorSelect.value==='author';controls.hidden=authorMode;drawLegend();draw();};
+    colorLabel.append(colorSelect); root.append(colorLabel);
+  }
   legend.append(bar, labels); root.append(nav, hint, map, legend, controls, detail);
   let trail = [model.tree], selectedFile = null;
   function describe(node) {

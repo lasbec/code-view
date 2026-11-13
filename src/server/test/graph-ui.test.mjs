@@ -1,0 +1,26 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { defaultGraphPreset } from '../graph-config.mjs';
+const require=createRequire(new URL('../../treemap/package.json',import.meta.url));
+const {JSDOM}=require('jsdom'),{build}=require('esbuild');
+test('graph expands groups, explains edges, highlights without regrouping and saves sidebar options',async t=>{
+  const bundle=await build({entryPoints:[new URL('../public/graph-view.js',import.meta.url).pathname],bundle:true,format:'iife',globalName:'Graph',write:false});
+  const dom=new JSDOM('<div id="host"></div>',{url:'http://localhost/#graph',runScripts:'outside-only'});t.after(()=>dom.window.close());dom.window.structuredClone=structuredClone;dom.window.eval(bundle.outputFiles[0].text);
+  const {document,Event}=dom.window,host=document.querySelector('#host'),p={id:'preset',...defaultGraphPreset()};
+  const calls=[],opened=[];
+  const result={nodes:[{id:'a',label:'<unsafe>',file:'a.ts',kind:'file'},{id:'b',label:'beta',file:'b.ts',kind:'file'},{id:'c',label:'charlie',file:'c.ts',kind:'file'}],groups:[{id:'group:0',label:'Cycle · 2',members:['a','b'],children:[{id:'a',members:['a']},{id:'b',members:['b']}]},{id:'c',members:['c']}],edges:[{source:'a',target:'c',count:1,evidence:[{file:'a.ts',line:2,kind:'call',name:'charlie'}]}],warnings:[],cycleCount:1};
+  const api=async(path,method,value)=>{calls.push({path,method,value});return method==='PUT'?{...p,...value}:result;};
+  dom.window.Graph.mountGraph(host,{state:{graphPresets:[p],inspections:[{id:'i',name:'Repo',hasResults:true}],selection:{}},api,reload:async()=>{},openDetail:(...args)=>opened.push(args)});
+  await new Promise(r=>setTimeout(r,0));
+  const click=el=>el.dispatchEvent(new dom.window.MouseEvent('click',{bubbles:true}));
+  click(host.querySelector('[data-node="group:0"]'));
+  assert.equal(host.querySelectorAll('.graph-box.open').length,1);assert.equal(host.querySelector('unsafe'),null);
+  click(host.querySelector('[data-edge]'));assert.match(host.querySelector('#graph-evidence').textContent,/a.ts:2/);
+  click(host.querySelector('[data-kind]'));assert.deepEqual(opened,[['file','a.ts','2']]);
+  const search=host.querySelector('#graph-search');search.value='beta';search.dispatchEvent(new Event('input',{bubbles:true}));assert.equal(host.querySelectorAll('.match').length,1);assert.equal(calls.length,1);
+  const level=host.querySelector('[name=level]');level.value='function';level.dispatchEvent(new Event('change',{bubbles:true}));assert.equal(host.querySelector('[name=relation] option[value=imports]'),null);
+  host.querySelector('[name=resolution]').value='2.5';host.querySelector('[name=directed]').checked=true;
+  host.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,0));
+  const saved=calls.find(c=>c.method==='PUT');assert.equal(saved.value.config.level,'function');assert.equal(saved.value.config.resolution,2.5);assert.equal(saved.value.config.directed,true);
+});

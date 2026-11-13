@@ -1,3 +1,5 @@
+import { defaultDeveloperPreset } from './developers.mjs';
+import { defaultGraphPreset } from './graph-config.mjs';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { resolve, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -43,6 +45,16 @@ export async function openStore(directory) {
     state.presets = [{ id: randomUUID(), ...defaultPreset() }];
     state.selection.preset = state.presets[0].id;
     state.presetSchema = 2;
+    await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+  }
+  if (!state.graphPresets) {
+    state.graphPresets = [{ id: randomUUID(), ...defaultGraphPreset() }];
+    await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+  }
+  if (!state.developerPresets) {
+    state.developerPresets = [{ id: randomUUID(), ...defaultDeveloperPreset() }];
     await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
     await rename(`${file}.tmp`, file);
   }

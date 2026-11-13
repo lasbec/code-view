@@ -30,8 +30,8 @@ export function inspectionList(path, model) {
       summary.function_count++; summary.complexity += fn.complexity;
       summary.definite += fn.definite; summary.possible += fn.possible;
     }
-    const files = db.prepare('SELECT id,total_lines FROM code_files').all().map(file => ({
-      ...file, name: file.id.split('/').at(-1), path: file.id, score: nodes.get(file.id)?.heat ?? null,
+    const files = db.prepare('SELECT id,total_lines,effective_lines FROM code_files').all().map(file => ({
+      ...file, name: file.id.split('/').at(-1), path: nodes.get(file.id)?.path ?? file.id, score: nodes.get(file.id)?.heat ?? null,
       function_count: 0, complexity: 0, definite: 0, possible: 0, ...byFile.get(file.id),
     }));
     return { files, functions, traitsAvailable, warnings: model.diagnostics.filter(d => d.severity === 'warning').map(d => d.message) };

@@ -92,6 +92,18 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal(listing.value.traitsAvailable,true);
   assert.equal(listing.value.functions[0].is_exported,1);
   assert.ok(listing.value.functions[0].definite>0);
+  const developersURL = `developers?inspection=${inspection.id}&preset=${state.presets[0].id}&developerPreset=${state.developerPresets[0].id}`;
+  const developers = await call(developersURL);
+  assert.equal(developers.status,200,JSON.stringify(developers.value));
+  assert.equal(developers.value.developers.length,1);
+  assert.equal(developers.value.developers[0].totals.created,1);
+  assert.equal(developers.value.developers[0].score,listing.value.files[0].score);
+  assert.match(rendered.value.treeMapHtml, /mainAuthor/);
+  const savedDeveloper = await call('developerPresets','POST',{...state.developerPresets[0],name:'Test developers'});
+  assert.equal(savedDeveloper.status,200);
+  assert.equal((await call('state')).value.selection.developerPreset,savedDeveloper.value.id);
+  assert.equal((await call(`developerPresets/${savedDeveloper.value.id}`,'PUT',{name:'Invalid',config:{}})).status,400);
+  assert.equal((await call(`developerPresets/${savedDeveloper.value.id}`,'DELETE')).status,200);
   const listItem = await call(`${detailURL}&listContext=true`);
   assert.equal(listItem.value.node.heat,listing.value.files[0].score);
   const fn = detail.value.functions[0];

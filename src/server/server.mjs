@@ -1,3 +1,5 @@
+import { validateDeveloperPreset, defaultDeveloperPreset } from './developers.mjs';
+import { validateGraphPreset } from './graph-config.mjs';
 import http from 'node:http';
 import { inspectDetail } from './details.mjs';
 import { readFile, rm } from 'node:fs/promises';
@@ -42,18 +44,18 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
       if (req.method === 'POST' && url.pathname === '/api/selection') {
         const value = await body(req);
         await store.update(s => {
-          for (const [key, list] of [['inspection', s.inspections], ['preset', s.presets]]) if (value[key] !== undefined) { check(list.some(c => c.id === value[key]), `Unknown ${key}.`); s.selection[key] = value[key]; }
+          for (const [key, list] of [['inspection', s.inspections], ['preset', s.presets], ['graphPreset', s.graphPresets], ['developerPreset', s.developerPresets]]) if (value[key] !== undefined) { check(list.some(c => c.id === value[key]), `Unknown ${key}.`); s.selection[key] = value[key]; }
         });
         return send({ ok: true });
       }
-      const match = url.pathname.match(/^\/api\/(inspections|presets)(?:\/([a-f0-9-]+))?$/);
+      const match = url.pathname.match(/^\/api\/(inspections|presets|graphPresets|developerPresets)(?:\/([a-f0-9-]+))?$/);
       if (match && ['POST', 'PUT', 'DELETE'].includes(req.method)) {
         const [, collection, id] = match;
         check(req.method === 'POST' ? !id : !!id, 'Invalid configuration route.');
         check(!(collection === 'inspections' && jobs.current?.status === 'running' && jobs.current.id === id), 'Wait for this inspection to finish or cancel it before editing.');
-        const value = req.method === 'DELETE' ? null : (collection === 'inspections' ? validateInspection : validatePreset)(await body(req));
+        const value = req.method === 'DELETE' ? null : (collection === 'inspections' ? validateInspection : collection === 'graphPresets' ? validateGraphPreset : collection === 'developerPresets' ? validateDeveloperPreset : validatePreset)(await body(req));
         const saved = await store.update(s => {
-          const list = s[collection], index = list.findIndex(c => c.id === id), key = collection === 'inspections' ? 'inspection' : 'preset';
+          const list = s[collection], index = list.findIndex(c => c.id === id), key = collection === 'inspections' ? 'inspection' : collection === 'graphPresets' ? 'graphPreset' : collection === 'developerPresets' ? 'developerPreset' : 'preset';
           check(!id || index >= 0, 'Configuration not found.');
           if (req.method === 'DELETE') { list.splice(index, 1); if (s.selection[key] === id) s.selection[key] = list[0]?.id ?? null; return { ok: true }; }
           const item = { ...(id ? list[index] : {}), ...value, id: id || randomUUID() };
@@ -70,6 +72,20 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         return send(jobs.start(config), 202);
       }
       if (req.method === 'POST' && url.pathname === '/api/cancel') { await body(req); jobs.cancel(); return send({ ok: true }); }
+      if (req.method === 'GET' && url.pathname === '/api/graph') {
+        const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
+        const p = state.graphPresets.find(p => p.id === url.searchParams.get('preset'));
+        check(c && p && usable(jobs.path(c.id)), 'Choose an inspection with results and a graph preset.');
+        const config = validateGraphPreset(p).config;
+        const result = await new Promise((accept, reject) => {
+          const worker = new Worker(new URL('./graph-worker.mjs', import.meta.url), { workerData: { path: jobs.path(c.id), config } });
+          const timer = setTimeout(() => { worker.terminate(); reject(new Error('Graph calculation timed out. Narrow the analysis scope.')); }, 120000);
+          worker.once('message', value => { clearTimeout(timer); accept(value); });
+          worker.once('error', error => { clearTimeout(timer); reject(error); });
+          worker.once('exit', code => { clearTimeout(timer); if (code) reject(new Error(`Graph worker exited: ${code}`)); });
+        });
+        return send(result);
+      }
       if (req.method === 'GET' && url.pathname === '/api/treemap') {
         const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
         const p = state.presets.find(c => c.id === url.searchParams.get('preset'));
@@ -77,7 +93,15 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         check(usable(jobs.path(c.id)), 'Start inspection to generate results.');
         const showFunctions = url.searchParams.get('showFunctions') ?? 'false';
         check(['true', 'false'].includes(showFunctions), 'Invalid function view flag.');
-        return send(await render(jobs.path(c.id), { ...p, options: { ...p.options, showFunctions: showFunctions === 'true', authorIdentities: c.authorIdentities ?? [] } }));
+        return send(await render(jobs.path(c.id), { ...p, developerPreset: state.developerPresets.find(d => d.id === state.selection.developerPreset) ?? state.developerPresets[0] ?? defaultDeveloperPreset(), options: { ...p.options, showFunctions: showFunctions === 'true', authorIdentities: c.authorIdentities ?? [] } }));
+      }
+      if (req.method === 'GET' && url.pathname === '/api/developers') {
+        const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
+        const p = state.presets.find(p => p.id === url.searchParams.get('preset'));
+        const d = state.developerPresets.find(p => p.id === url.searchParams.get('developerPreset'));
+        check(c && p && d && usable(jobs.path(c.id)), 'Choose inspection results and both presets.');
+        const options = { ...p.options, include: [], exclude: [], showFunctions: true, includeZeroArea: true, authorIdentities: c.authorIdentities ?? [] };
+        return send(await render(jobs.path(c.id), { ...p, developerPreset: d, options }, false, 'developers'));
       }
       if (req.method === 'GET' && url.pathname === '/api/list') {
         const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
@@ -98,7 +122,7 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         check(result.model?.ok, result.error || 'Unable to calculate scores.');
         return send(await inspectDetail(jobs.path(c.id), { ...c, preset: p }, url.searchParams.get('id'), kind, result.model, result.expanded));
       }
-      const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/detail-view.js': ['detail-view.js', 'text/javascript'], '/list-view.js': ['list-view.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/metric-help.js': ['metric-help.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/themes.css': ['themes.css', 'text/css'], '/theme.js': ['theme.js', 'text/javascript'], '/preset-fields.js': ['preset-fields.js', 'text/javascript'], '/treemap/src/catalog.mjs': ['../../treemap/src/catalog.mjs', 'text/javascript'] };
+      const assets = { '/developers-view.js': ['developers-view.js', 'text/javascript'], '/graph-view.js': ['graph-view.js', 'text/javascript'], '/graph.css': ['graph.css', 'text/css'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/detail-view.js': ['detail-view.js', 'text/javascript'], '/list-view.js': ['list-view.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/metric-help.js': ['metric-help.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/themes.css': ['themes.css', 'text/css'], '/theme.js': ['theme.js', 'text/javascript'], '/preset-fields.js': ['preset-fields.js', 'text/javascript'], '/treemap/src/catalog.mjs': ['../../treemap/src/catalog.mjs', 'text/javascript'] };
       if (req.method === 'GET' && assets[url.pathname]) { const [file, type] = assets[url.pathname]; return send(await readFile(new URL(`./public/${file}`, import.meta.url), 'utf8'), 200, type); }
       send({ error: 'Not found.' }, 404);
     } catch (error) { send({ error: error.message }, error.status ?? 500); }

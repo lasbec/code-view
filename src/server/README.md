@@ -144,3 +144,69 @@ Mutation columns count definite/possible static mutation occurrences, excluding
 objects created locally in the function. File complexity sums function cyclomatic
 complexity. Rows are fetched once per inspection-result/preset context; searches,
 filters, pagination and sorting run locally without re-reading source files.
+
+## Dependency graph
+
+The **Graph** tab shows expandable cycle groups or coupling clusters, at file or
+function level. The right sidebar manages named global grouping presets (New,
+Duplicate, Delete, Save & apply). Presets and their selected dropdown entry survive
+server restarts; they are independent of treemap scoring presets. Open groups,
+zoom and search are temporary. Search highlights without recalculating groups.
+
+Choose calls, function/symbol references, or file imports/reexports. References
+include callback and export uses and do not imply direct calls. Imports currently
+include type imports. Unknown/external targets cannot be followed; module-scope
+uses are excluded from function graphs. Paths are relative to the tsconfig.
+Include/exclude patterns change the graph before grouping, and can break cycles.
+
+Cycle mode collapses strongly connected components. Direct function recursion is
+optional; internal file self-edges are omitted. Coupling mode uses deterministic
+multilevel modularity optimization, with resolution 0.1–5 (larger values prefer
+smaller clusters), binary/count/logarithmic occurrence weights, and optional
+direction. Large clusters may be subdivided within their parent, up to the chosen
+depth, with increasingly fine resolution. Target size is a subdivision trigger,
+not a hard size guarantee. Minimum collapse size affects presentation only.
+Cycle outlines indicate membership in an original cycle component; they do not
+claim every cluster subset is itself cyclic. File cycles do not prove recursion.
+
+Click groups to open/close them; double-click elements to inspect source details.
+Connection numbers count distinct directed element relationships, not execution
+frequency. Select a connection for its source evidence. Up to 100 locations per
+relationship and 300 per selection are shown. Use Fit, zoom buttons, mouse wheel
+and background dragging to navigate. Calculations run in a worker with a timeout.
+
+## Developers
+
+The Developers tab attributes current file scores to Git authors, using the same
+all-file scoring population as Files and Functions. Search, table sorting and
+Treemap path filters do not change these scores. Git date bounds come from the
+selected scoring preset. Existing author identities combine email aliases.
+
+The right sidebar provides independent named developer presets (New, Duplicate,
+Delete, Save & apply). Defaults are proportional attribution, weighted average,
+no extra normalization, weighted line changes, no merges and created/deleted/changed
+weights of 1/1/1. Other aggregations are sum, maximum, weighted median and weighted
+quantile. File scores can be divided by effective code lines or scaled to 0–100
+using the largest score across the inspection; zero-code-line files have no
+per-line score. Winner attribution gives the whole file to its main author;
+proportional attribution uses that author's fraction of commits or weighted line
+changes. Ties resolve by identity email. Missing/zero weighted changes fall back
+to commit shares and are marked. This describes contact with currently scored
+files, not the quality impact of individual developers. Historical renames are
+not followed. Merge contributions are diffs against the first parent.
+
+Developer details show attributed file scores and individual commits. Created,
+deleted and changed totals and averages per distinct commit remain unweighted;
+only commits touching inspected current file paths count, including deletion-only
+commits. Unknown categories remain unavailable rather than becoming zero.
+
+New inspections use a Myers diff to separate local replacement blocks into
+changed=min(added,removed), created=added-changed, deleted=removed-changed.
+Whitespace and comments count. Existing Git added/deleted/churn fields retain
+their original meanings; weighted contributions are separate. Old inspections
+need a rerun for the new categories. See [algorithm research](../../docs/research/created-deleted-changed-lines.md).
+
+Treemap's Color by selector switches between Score and Main author. Main authors
+use the selected developer preset's basis, weights and merge policy. Function
+subtiles inherit their file author's color; unknown authors are gray. Colors are
+stable for a canonical identity, and the categorical legend lists authors.

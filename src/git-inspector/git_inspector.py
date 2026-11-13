@@ -50,7 +50,7 @@ class Git:
 
 SCHEMA = [
     """CREATE TABLE git_inspector_schema (version INTEGER NOT NULL)""",
-    "INSERT INTO git_inspector_schema VALUES (2)",
+    "INSERT INTO git_inspector_schema VALUES (3)",
     """CREATE TABLE git_repositories (
         id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE)""",
     """CREATE TABLE git_commits (
@@ -70,6 +70,7 @@ SCHEMA = [
         position INTEGER NOT NULL, change_type TEXT NOT NULL,
         old_path TEXT, path TEXT NOT NULL, similarity INTEGER,
         lines_added INTEGER, lines_deleted INTEGER, churn INTEGER, is_binary INTEGER,
+        lines_created INTEGER, lines_removed INTEGER, lines_changed INTEGER,
         PRIMARY KEY (repository_id, commit_hash, position),
         FOREIGN KEY (repository_id, commit_hash) REFERENCES git_commits ON DELETE CASCADE)""",
     """CREATE TABLE git_branches (
@@ -120,13 +121,17 @@ def ensure_schema(db):
             for column in ('lines_added', 'lines_deleted', 'churn', 'is_binary'):
                 db.execute(f'ALTER TABLE git_file_changes ADD COLUMN {column} INTEGER')
             db.execute('UPDATE git_inspector_schema SET version=2')
-        elif version != [(2,)]:
+        elif version not in ([(2,)], [(3,)]):
             raise InspectionError('Unsupported git-inspector schema version')
+        if version in ([(1,)], [(2,)]):
+            for column in ('lines_created', 'lines_removed', 'lines_changed'):
+                db.execute(f'ALTER TABLE git_file_changes ADD COLUMN {column} INTEGER')
+            db.execute('UPDATE git_inspector_schema SET version=3')
 
 
 def file_changes(git, commit, parents):
     args = ['diff-tree', '--no-commit-id', '--name-status', '-z', '-r',
-            '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '-M50%']
+            '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '-M50%', '--diff-algorithm=myers', '--no-indent-heuristic']
     args += [parents[0], commit] if parents else ['--root', commit]
     tokens = git.run(*args).stdout.split(b'\0')
     index = 0
@@ -141,9 +146,35 @@ def file_changes(git, commit, parents):
         yield status[0], old_path, path, int(status[1:]) if status[1:] else None
 
 
+def count_line_blocks(patch):
+    """Disjoint text-line counts from local Myers replacement blocks."""
+    created = removed = changed = additions = deletions = 0
+    in_hunk = False
+    for line in patch.split(b'\n'):
+        if line.startswith(b'@@ '):
+            in_hunk = True
+        elif in_hunk and line.startswith(b'+'):
+            additions += 1
+            continue
+        elif in_hunk and line.startswith(b'-'):
+            deletions += 1
+            continue
+        elif line.startswith(b'\\ No newline'):
+            continue
+        else:
+            in_hunk = False
+        paired = min(additions, deletions)
+        changed += paired
+        created += additions - paired
+        removed += deletions - paired
+        additions = deletions = 0
+    paired = min(additions, deletions)
+    return created + additions - paired, removed + deletions - paired, changed + paired
+
+
 def update_churn(db, git, repo_id, commit, parents):
     args = ['diff-tree', '--no-commit-id', '--numstat', '-z', '-r',
-            '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '-M50%']
+            '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '-M50%', '--diff-algorithm=myers', '--no-indent-heuristic']
     args += [parents[0], commit] if parents else ['--root', commit]
     tokens = git.run(*args).stdout.split(b'\0')
     index = 0
@@ -157,10 +188,22 @@ def update_churn(db, git, repo_id, commit, parents):
         binary = added == b'-' or deleted == b'-'
         additions, deletions = (None, None) if binary else (int(added), int(deleted))
         churn = None if binary else additions + deletions
+        counts = (None, None, None)
+        if not binary and (additions == 0 or deletions == 0):
+            counts = (additions, deletions, 0)
+        elif not binary:
+            old = db.execute('SELECT old_path FROM git_file_changes WHERE repository_id=? AND commit_hash=? AND path=?',
+                             (repo_id, commit, decode(raw_path))).fetchone()
+            patch_args = ['diff-tree', '--no-commit-id', '-p', '-r', '--unified=0', '--inter-hunk-context=0',
+                          '--no-color', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none',
+                          '--submodule=short', '-M50%', '--diff-algorithm=myers', '--no-indent-heuristic']
+            patch_args += [parents[0], commit] if parents else ['--root', commit]
+            paths = [decode(raw_path)] + ([old[0]] if old and old[0] else [])
+            counts = count_line_blocks(git.run('--literal-pathspecs', *patch_args, '--', *paths).stdout)
         db.execute('''UPDATE git_file_changes
-            SET lines_added=?, lines_deleted=?, churn=?, is_binary=?
+            SET lines_added=?, lines_deleted=?, churn=?, is_binary=?, lines_created=?, lines_removed=?, lines_changed=?
             WHERE repository_id=? AND commit_hash=? AND path=?''',
-            (additions, deletions, churn, int(binary), repo_id, commit, decode(raw_path)))
+            (additions, deletions, churn, int(binary), *counts, repo_id, commit, decode(raw_path)))
 
 
 def parse_merge(output):
@@ -264,7 +307,7 @@ def inspect(repo, branch, output, limit, mode, progress=None):
                 commit = raw_hash.decode('ascii')
                 if db.execute('SELECT 1 FROM git_commits WHERE repository_id=? AND hash=?', (repo_id, commit)).fetchone():
                     if db.execute('''SELECT 1 FROM git_file_changes
-                            WHERE repository_id=? AND commit_hash=? AND is_binary IS NULL LIMIT 1''',
+                            WHERE repository_id=? AND commit_hash=? AND (is_binary IS NULL OR (is_binary=0 AND lines_changed IS NULL)) LIMIT 1''',
                             (repo_id, commit)).fetchone():
                         parents = [row[0] for row in db.execute('''SELECT parent_hash FROM git_commit_parents
                             WHERE repository_id=? AND commit_hash=? ORDER BY position''', (repo_id, commit))]

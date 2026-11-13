@@ -161,3 +161,17 @@ FK: `(repository_id, commit_hash, conflict_position)` → `git_merge_conflicts(r
 | Merge committer | Creator of the merge commit, not proof of who resolved conflicts. |
 | Older text messages | Conflict types without guessed path mappings; free-form message text is not stored. |
 | Not stored | Commit messages, diffs, file contents. |
+
+### Schema v3: disjoint line categories
+
+`git_file_changes` additionally contains nullable INTEGER columns `lines_created`,
+`lines_removed` (deleted), and `lines_changed`. A local Myers replacement block
+pairs min(added, deleted) lines as changed; excess lines are created or removed.
+Context and hunk boundaries separate blocks. Whitespace counts. Binary line
+counts remain NULL. The existing `lines_added`, `lines_deleted` and `churn` retain
+their definitions; churn = created + removed + 2 × changed. Developer contribution
+weights are applied later, independently of these stored counts.
+
+v1/v2 databases migrate transactionally. Append recalculates selected text commits
+missing the new counters from Git patches. Nonselected old results remain NULL;
+no category counts are guessed from file totals.

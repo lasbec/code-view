@@ -1,0 +1,21 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+const require=createRequire(new URL('../../treemap/package.json',import.meta.url));
+const {JSDOM}=require('jsdom'),{build}=require('esbuild');
+import { defaultDeveloperPreset } from '../developers.mjs';
+test('developer sidebar saves weights, table searches and details show raw commit counts',async t=>{
+  const bundle=await build({entryPoints:[new URL('../public/developers-view.js',import.meta.url).pathname],bundle:true,format:'iife',globalName:'Developers',write:false});
+  const dom=new JSDOM('<main id="host"></main>',{runScripts:'outside-only'});t.after(()=>dom.window.close());dom.window.eval(bundle.outputFiles[0].text);
+  const host=dom.window.document.querySelector('#host');
+  const state={selection:{},inspections:[{id:'i',name:'Repo',hasResults:true}],presets:[{id:'s',name:'Score'}],developerPresets:[{id:'d',...defaultDeveloperPreset()}]};
+  const person={id:'a@example.com',name:'Alice <unsafe>',color:'hsl(20 58% 65%)',score:50,totals:{created:4,deleted:2,changed:3},perCommit:{created:4,deleted:2,changed:3},files:[{path:'a.ts',rawScore:50,score:50,weight:1,contribution:50}],commits:[{hash:'abc123',date:'2026-01-01',created:4,deleted:2,changed:3}]};
+  const calls=[],api=async(path,method,value)=>{calls.push({path,method,value});if(path==='state')return state;if(path.startsWith('developers?'))return {available:true,developers:[person]};return {};};
+  const settle=()=>new Promise(r=>setTimeout(r,15));
+  await dom.window.Developers.mountDevelopers(host,{state,api,reload:async()=>{}});await settle();
+  assert.ok(host.querySelector('.graph-sidebar form'));assert.match(host.textContent,/Alice <unsafe>/);assert.equal(host.querySelector('unsafe'),null);
+  host.querySelector('[data-person]').click();assert.match(host.querySelector('[data-detail]').textContent,/abc123/);
+  const search=host.querySelector('[data-search]');search.value='nobody';search.dispatchEvent(new dom.window.Event('input'));assert.equal(host.querySelectorAll('tbody tr').length,0);
+  host.querySelector('[name="changed"]').value='3';host.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true,bubbles:true}));await settle();
+  const saved=calls.find(c=>c.method==='PUT');assert.equal(saved.path,'developerPresets/d');assert.equal(saved.value.config.changed,3);assert.equal(saved.value.config.aggregation,'average');
+});

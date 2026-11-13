@@ -92,3 +92,15 @@ test('standalone snippets preserve the data API colors', t => {
     assert.equal(tiles[i].style.background, node.color === '#c9d0d8' ? 'rgb(201, 208, 216)' : node.color);
   }
 });
+
+test('main author mode colors file and function tiles, renders categorical legend and returns to heat',t=>{
+  const author={id:'alice',name:'Alice',color:'#aabbcc'};
+  const children=[{id:'f',path:'a.ts',kind:'function',name:'f',area:10,heat:50,mainAuthor:author}];
+  const tree={name:'/',children:[{id:'a.ts',path:'a.ts',kind:'file',name:'a.ts',area:10,heat:50,mainAuthor:author,children}]};
+  const {root,dom}=mount(t,{min:0,yellowFrom:30,redFrom:70,max:100},true,{tree,authors:[author]});
+  const select=root.querySelector('select[aria-label="Color by"]');assert.ok(select);
+  select.value='author';select.dispatchEvent(new dom.window.Event('change'));
+  assert.match(root.querySelector('.legend').textContent,/Alice/);assert.equal(root.querySelector('.heat-controls').hidden,true);
+  assert.equal(root.querySelector('.tile:not(.file-frame)').style.background,'rgb(170, 187, 204)');
+  select.value='score';select.dispatchEvent(new dom.window.Event('change'));assert.equal(root.querySelector('.heat-controls').hidden,false);
+});

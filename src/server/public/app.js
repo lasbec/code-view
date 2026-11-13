@@ -1,3 +1,5 @@
+import { mountDevelopers } from './developers-view.js';
+import { mountGraph } from './graph-view.js';
 import { mountInspectionList } from './list-view.js';
 import { showDetailRoute, closeDetail, detailHash } from './detail-view.js';
 import { metricSelect, functionAreaSelect, termHtml, scoreHtml, readScores, operationSelect, updateAggregation } from './preset-fields.js';
@@ -35,14 +37,25 @@ function render() {
   const hadDetail = !!document.querySelector('#detail-view');
   closeDetail();
   if (hadDetail && listKey === currentTreeKey() && ['files', 'functions'].includes(route()) && view.querySelector(`[data-list-route="${route()}"]`)) return;
+  if (hadDetail && route() === 'graph' && view.querySelector('.graph-workspace')) return;
   if (hadDetail && route() === 'treemap' && document.querySelector('#map iframe')) return;
   const outputOpen = document.querySelector('#job details')?.open ?? false;
+  document.body.classList.toggle('graph-page', ['graph', 'developers'].includes(route()));
   document.body.classList.toggle('treemap-page', route() === 'treemap');
   requestNumber++;
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.hash === `#${route()}`));
   if (route() === 'inspections') inspectionView();
   else if (route() === 'presets') presetView();
   else if (['files', 'functions'].includes(route())) listView();
+  else if (route() === 'developers') { listKey = currentTreeKey(); view.innerHTML = ''; mountDevelopers(view, { state, api, reload: load }); }
+  else if (route() === 'graph') {
+    view.innerHTML = '';
+    mountGraph(view, { state, api, reload: load, openDetail: (kind, id, line) => {
+      const p = selectedPreset();
+      if (!p) { notice('Create a scoring preset to inspect source details.'); return; }
+      history.pushState({ inspector: true }, '', detailHash(kind, id, { inspection: selectedInspection()?.id, preset: p.id, from: 'graph', listContext: 'true', ...(line ? { line } : {}) })); render();
+    } });
+  }
   else if (route() === 'help') view.innerHTML = metricHelpHtml(metrics);
   else treemapView();
   const toolbar = view.querySelector('.toolbar');
@@ -118,7 +131,7 @@ function treemapView() {
   else { document.querySelector('#map').innerHTML = '<p class="muted">Calculating treemap…</p>'; drawMap(c, p, requestNumber); }
   treeKey = currentTreeKey();
 }
-function currentTreeKey() { return JSON.stringify([showFunctions, state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset()]); }
+function currentTreeKey() { return JSON.stringify([showFunctions, state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset(), state.developerPresets]); }
 async function drawMap(c, p, number) {
   try {
     const result = await api(`treemap?inspection=${encodeURIComponent(c.id)}&preset=${encodeURIComponent(p.id)}&showFunctions=${showFunctions}`);
@@ -142,13 +155,14 @@ view.addEventListener('input', event => {
 document.addEventListener('change', async event => {
   if (event.target.id === 'show-functions') { showFunctions = event.target.checked; render(); return; }
   if (event.target.name === 'metric') updateAggregation(event.target.closest('.term'));
-  if (event.target.name === 'aggregation') event.target.closest('.term').querySelector('.quantile-field').hidden = event.target.value !== 'quantile';
+  if (event.target.name === 'aggregation' && event.target.closest('.term')) event.target.closest('.term').querySelector('.quantile-field').hidden = event.target.value !== 'quantile';
   if (event.target.name === 'operation') document.querySelector('#group-quantile').hidden = event.target.value !== 'quantile';
   const key = event.target.dataset.select;
   if (!key || !event.target.value) return;
   try { await api('selection', 'POST', { [key]: event.target.value }); newInspection = newPreset = false; await load(); render(); } catch (e) { notice(e); }
 });
 view.addEventListener('submit', async event => {
+  if (!['inspection-form', 'preset-form'].includes(event.target.id)) return;
   event.preventDefault(); notice(null);
   const form = event.target, data = new FormData(form), id = form.dataset.id;
   let value, collection;
@@ -199,7 +213,7 @@ let polling = false;
 setInterval(async () => {
   if (polling || !state) return;
   polling = true;
-  try { await load(); if ((route() === 'treemap' && treeKey !== currentTreeKey()) || (['files', 'functions'].includes(route()) && listKey !== currentTreeKey())) render(); else updateProgress(); } catch (e) { notice(e); } finally { polling = false; }
+  try { await load(); if ((route() === 'treemap' && treeKey !== currentTreeKey()) || (['files', 'functions', 'developers'].includes(route()) && listKey !== currentTreeKey())) render(); else updateProgress(); } catch (e) { notice(e); } finally { polling = false; }
 }, 1500);
 
 window.addEventListener('message', async event => {

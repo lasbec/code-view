@@ -1,0 +1,38 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { aggregateDeveloper, developerData, defaultDeveloperPreset, validateDeveloperPreset } from '../developers.mjs';
+
+test('weighted aggregation preserves shares rather than averaging attributed amounts',()=>{
+  const config=defaultDeveloperPreset().config, values=[{score:100,weight:.1},{score:20,weight:.9}];
+  assert.equal(aggregateDeveloper(values,config),28);
+  assert.equal(aggregateDeveloper(values,{...config,aggregation:'sum'}),28);
+  assert.equal(aggregateDeveloper(values,{...config,aggregation:'median'}),20);
+  assert.equal(aggregateDeveloper(values,{...config,aggregation:'quantile',quantile:95}),100);
+  assert.equal(aggregateDeveloper([{score:null,weight:1}],config),null);
+  assert.throws(()=>validateDeveloperPreset({name:'bad',config:{...config,changed:-1}}));
+});
+test('attribution merges aliases, counts unique commits, keeps raw activity separate and honors scope',t=>{
+  const dir=mkdtempSync(join(tmpdir(),'developers-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const path=join(dir,'test.sqlite'),db=new DatabaseSync(path);
+  db.exec(`CREATE TABLE git_commits(repository_id,hash,author_name,author_email,committed_at,is_merge);
+  CREATE TABLE git_file_changes(repository_id,commit_hash,path,lines_created,lines_removed,lines_changed);
+  INSERT INTO git_commits VALUES(1,'a','Alice','alias@example.com','2026-01-01',0),(1,'b','Bob','bob@example.com','2026-01-02',0),(1,'m','Merge','merge@example.com','2026-01-03',1);
+  INSERT INTO git_file_changes VALUES(1,'a','a.ts',3,0,1),(1,'a','b.ts',2,0,0),(1,'a','ignored.ts',100,0,0),(1,'b','a.ts',1,0,1),(1,'m','a.ts',99,0,0);`);db.close();
+  const files=[{path:'a.ts',score:100,effective_lines:10},{path:'b.ts',score:20,effective_lines:0}], preset=defaultDeveloperPreset();
+  const identities=[{name:'Canonical Alice',email:'alice@example.com',aliases:['alias@example.com']}];
+  const result=developerData(path,files,preset,identities);
+  assert.equal(result.developers.length,2);
+  const alice=result.developers.find(p=>p.id==='alice@example.com');
+  assert.equal(alice.name,'Canonical Alice');assert.equal(alice.commits.length,1);assert.equal(alice.totals.created,5);assert.equal(alice.totals.changed,1);
+  assert.equal(alice.files[0].weight,2/3);assert.equal(result.mainAuthors['a.ts'].id,alice.id);
+  const winner=developerData(path,files,{...preset,config:{...preset.config,attribution:'winner'}},identities);
+  assert.equal(winner.developers.find(p=>p.id==='bob@example.com').score,null);
+  const normalized=developerData(path,files,{...preset,config:{...preset.config,normalization:'lines'}},identities);
+  assert.equal(normalized.developers.find(p=>p.id===alice.id).score,10);
+  assert.equal(developerData(path,files,preset,identities,{since:'2026-01-02'}).developers.length,1);
+  assert.equal(developerData(path,files,{...preset,config:{...preset.config,merges:'only'}},identities).developers[0].name,'Merge');
+});

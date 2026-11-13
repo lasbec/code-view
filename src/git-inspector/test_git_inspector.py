@@ -84,16 +84,24 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(self.query("SELECT lines_added, lines_deleted, churn, is_binary FROM git_file_changes WHERE path='binary.dat'"),
                          [(None, None, None, 1)])
 
+    def test_disjoint_line_categories_use_local_blocks(self):
+        self.assertEqual(inspector.count_line_blocks(b'@@ -1,2 +1,3 @@\n-old\n-old2\n+new\n+new2\n+new3\n'), (1, 0, 2))
+        self.assertEqual(inspector.count_line_blocks(b'@@ -1 +0,0 @@\n-old\n@@ -20,0 +20 @@\n+new\n'), (1, 1, 0))
+        self.commit('text.txt', 'a\nb\nc\n')
+        self.commit('text.txt', 'a\nreplacement\nc\nextra\n')
+        self.run_import()
+        self.assertEqual(self.query("SELECT lines_created,lines_removed,lines_changed FROM git_file_changes WHERE path='text.txt' ORDER BY lines_changed"), [(3, 0, 0), (1, 0, 1)])
+
     def test_v1_migration_backfills_selected_commits_on_append(self):
         self.commit('one', 'one\n')
         self.commit('two', 'two\nthree\n')
         self.run_import()
         with sqlite3.connect(self.output) as db:
-            for column in ('lines_added', 'lines_deleted', 'churn', 'is_binary'):
+            for column in ('lines_added', 'lines_deleted', 'churn', 'is_binary', 'lines_created', 'lines_removed', 'lines_changed'):
                 db.execute(f'ALTER TABLE git_file_changes DROP COLUMN {column}')
             db.execute('UPDATE git_inspector_schema SET version=1')
         self.assertEqual(self.run_import(limit=1), (1, 0, 0))
-        self.assertEqual(self.query('SELECT version FROM git_inspector_schema'), [(2,)])
+        self.assertEqual(self.query('SELECT version FROM git_inspector_schema'), [(3,)])
         self.assertEqual(self.query('SELECT path,churn FROM git_file_changes ORDER BY path'), [('one', None), ('two', 2)])
         self.assertEqual(self.run_import(), (2, 0, 0))
         self.assertEqual(self.query('SELECT path,churn FROM git_file_changes ORDER BY path'), [('one', 1), ('two', 2)])
