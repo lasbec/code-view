@@ -1,0 +1,231 @@
+import initSqlJs from 'sql.js/dist/sql-asm-memory-growth.js';
+import { minimatch } from 'minimatch';
+
+let engine;
+const quote = name => `"${name.replaceAll('"', '""')}"`;
+export const normalizePath = value => {
+  const parts = [];
+  for (const part of value.replaceAll('\\', '/').split('/')) {
+    if (part === '..' && parts.length && parts.at(-1) !== '..') parts.pop();
+    else if (part && part !== '.') parts.push(part);
+  }
+  return (value.startsWith('/') ? '/' : '') + parts.join('/');
+};
+const join = (base, value) => /^(\/|[A-Za-z]:)/.test(value) ? normalizePath(value) : normalizePath(`${base}/${value}`);
+const directory = value => value.slice(0, value.lastIndexOf('/'));
+function rows(db, sql, params = []) {
+  const statement = db.prepare(sql);
+  try {
+    statement.bind(params);
+    const result = [];
+    while (statement.step()) result.push(statement.getAsObject());
+    return result;
+  } finally { statement.free(); }
+}
+function fail(message) { throw new Error(message); }
+function keys(value, allowed, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(`${label} muss ein Objekt sein.`);
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`${label}: unbekannte Option "${key}".`);
+}
+function number(value, label) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) fail(`${label} muss eine endliche Zahl ab 0 sein.`);
+  return value;
+}
+function validate(config, catalog) {
+  keys(config, ['area', 'scores', 'heat'], 'Konfiguration');
+  const metric = name => {
+    if (!catalog.has(name)) fail(`Unbekannte Kennzahl "${name}". Verfügbare Kennzahlen mit --list-metrics anzeigen. Für size_bytes den Code-Inspector erneut ausführen.`);
+    return name;
+  };
+  const area = metric(config.area ?? 'code_files.size_bytes');
+  if (!Array.isArray(config.scores) || config.scores.length < 1 || config.scores.length > 3) fail('Es müssen ein bis drei Scores definiert sein.');
+  const scores = config.scores.map((score, i) => {
+    keys(score, ['name', 'metrics'], `Score ${i + 1}`);
+    if (score.name !== undefined && (typeof score.name !== 'string' || !score.name.trim())) fail('Score-Namen müssen nichtleere Texte sein.');
+    if (!Array.isArray(score.metrics) || !score.metrics.length) fail(`Score ${i + 1} benötigt mindestens eine Kennzahl.`);
+    return { name: score.name ?? `Score ${i + 1}`, metrics: score.metrics.map(term => {
+      keys(term, ['metric', 'min', 'max', 'factor'], 'Kennzahlbeitrag');
+      const min = number(term.min ?? 0, 'Minimum');
+      const max = term.max === undefined ? Infinity : number(term.max, 'Maximum');
+      if (max <= min) fail('Das Kennzahl-Maximum muss größer als das Minimum sein.');
+      return { metric: metric(term.metric), min, max, factor: number(term.factor ?? 1, 'Faktor') };
+    }) };
+  });
+  const heat = config.heat ?? {};
+  keys(heat, ['min', 'max', 'yellowFrom', 'redFrom'], 'Heat-Skala');
+  for (const [key, value] of Object.entries(heat)) number(value, `heat.${key}`);
+  return { area, scores, heat };
+}
+function sources(db, options) {
+  const tables = new Set(rows(db, "SELECT name FROM sqlite_master WHERE type IN ('table','view')").map(r => r.name));
+  if (!tables.has('code_files')) fail('Die SQLite-Datei enthält keine code_files. Zuerst den Code-Inspector ausführen.');
+  const metadata = tables.has('code_metadata') ? Object.fromEntries(rows(db, 'SELECT key,value FROM code_metadata').map(r => [r.key, r.value])) : {};
+  const repos = tables.has('git_repositories') ? rows(db, 'SELECT id,path FROM git_repositories') : [];
+  const configPath = normalizePath(metadata.tsconfig ?? '');
+  const base = directory(configPath);
+  const repo = options.repository !== undefined
+    ? repos.find(r => String(r.id) === String(options.repository) || normalizePath(r.path) === normalizePath(String(options.repository)))
+    : repos.filter(r => base === normalizePath(r.path) || base.startsWith(normalizePath(r.path) + '/')).sort((a, b) => b.path.length - a.path.length)[0] ?? (repos.length === 1 ? repos[0] : undefined);
+  if (options.repository !== undefined && !repo) fail('Das ausgewählte Git-Repository wurde nicht gefunden.');
+  if (repos.length && !repo) fail('Git-Repository nicht eindeutig zuordenbar. repository und gegebenenfalls codePrefix angeben.');
+  let prefix = options.codePrefix;
+  if (prefix === undefined && repo) {
+    const root = normalizePath(repo.path);
+    if (base !== root && !base.startsWith(root + '/')) fail('Code- und Git-Pfadbasen passen nicht zusammen. codePrefix relativ zum Git-Repository angeben.');
+    prefix = base.slice(root.length).replace(/^\//, '');
+  }
+  prefix ??= '';
+  if (typeof prefix !== 'string' || /^(\/|[A-Za-z]:)/.test(prefix) || normalizePath(prefix).startsWith('..')) fail('codePrefix muss ein relativer Pfad innerhalb des Repositorys sein.');
+  const params = [];
+  let where = '';
+  for (const [name, operator] of [['since', '>='], ['until', '<=']]) {
+    if (options[name] !== undefined) {
+      if (typeof options[name] !== 'string' || !Number.isFinite(Date.parse(options[name]))) fail(`${name} muss ein gültiger ISO-Zeitpunkt sein.`);
+      where += ` AND julianday(c.committed_at) ${operator} julianday(?)`;
+      params.push(new Date(options[name]).toISOString());
+    }
+  }
+  if (options.since && options.until && Date.parse(options.since) > Date.parse(options.until)) fail('since muss vor until liegen.');
+  if (repo) params.unshift(repo.id);
+  const changes = repo && tables.has('git_file_changes') && tables.has('git_commits')
+    ? `(SELECT ch.* FROM git_file_changes ch JOIN git_commits c ON c.repository_id=ch.repository_id AND c.hash=ch.commit_hash WHERE ch.repository_id=?${where})`
+    : null;
+  const definitions = [
+    ['code_files', 't.id', ''],
+    ['code_functions', 't.file_id', ''],
+    ['code_file_function_counts', 't.file_id', ''],
+    ['code_access_counts', 'fn.file_id', ' JOIN code_functions fn ON fn.id=t.function_id'],
+    ['code_call_counts', 'fn.file_id', ' JOIN code_functions fn ON fn.id=t.caller_id'],
+    ...['code_parameters', 'code_accesses', 'code_shadowing'].map(t => [t, 'fn.file_id', ' JOIN code_functions fn ON fn.id=t.function_id']),
+    ['code_calls', 't.file_id', ''], ['code_function_references', 't.file_id', ''],
+    ['code_diagnostics', 't.file', ''],
+  ].filter(([table]) => tables.has(table)).map(([table, file, joins]) => ({ table, file, from: `${quote(table)} t${joins}`, params: [], git: false }));
+  if (changes) {
+    definitions.push({ table: 'git_file_changes', file: 't.path', from: `${changes} t`, params, git: true });
+    const commitFiles = `(SELECT DISTINCT repository_id,commit_hash,path FROM ${changes})`;
+    for (const table of ['git_commits', 'git_commit_parents', 'git_merge_analysis', 'git_merge_conflict_files', 'git_merge_conflicts', 'git_merge_conflict_paths']) {
+      if (!tables.has(table)) continue;
+      const pathCondition = ['git_merge_conflict_files', 'git_merge_conflict_paths'].includes(table) ? ' AND ch.path=t.path' : '';
+      const joinCondition = table === 'git_merge_conflicts' ? ` JOIN git_merge_conflict_paths cp ON cp.repository_id=t.repository_id AND cp.commit_hash=t.commit_hash AND cp.conflict_position=t.position AND cp.path=ch.path` : '';
+      if (table === 'git_merge_conflicts' && !tables.has('git_merge_conflict_paths')) continue;
+      definitions.push({ table, file: 'ch.path', from: `${quote(table)} t JOIN ${commitFiles} ch ON ch.repository_id=t.repository_id AND ch.commit_hash=t.${table === 'git_commits' ? 'hash' : 'commit_hash'}${pathCondition}${joinCondition}`, params, git: true });
+    }
+  }
+  const catalog = new Map();
+  for (const source of definitions) {
+    for (const column of rows(db, `PRAGMA table_info(${quote(source.table)})`)) {
+      const viewMetrics = { code_file_function_counts: ['function_count'], code_access_counts: ['reads', 'writes', 'mutations'], code_call_counts: ['call_count'] };
+      if ((/INT|REAL|NUM|FLOAT|DOUBLE|DECIMAL/i.test(column.type) || viewMetrics[source.table]?.includes(column.name)) && !['id', 'repository_id'].includes(column.name)) {
+        catalog.set(`${source.table}.${column.name}`, { ...source, expression: `t.${quote(column.name)}`, description: `Summe von ${source.table}.${column.name} je Datei` });
+      }
+    }
+    catalog.set(`${source.table}.count`, { ...source, expression: '1', description: `Anzahl der ${source.table}-Datensätze je Datei` });
+  }
+  for (const [alias, target] of Object.entries({ 'code.function_count': 'code_functions.count', 'code.call_count': 'code_calls.count', 'git.change_count': 'git_file_changes.count', 'git.conflict_count': 'git_merge_conflict_files.count' })) {
+    if (catalog.has(target)) catalog.set(alias, catalog.get(target));
+  }
+  return { catalog, prefix, base };
+}
+export function colorFor(value, legend) {
+  const { min, max, yellowFrom, redFrom } = legend;
+  if (max === min) return 'rgb(34, 160, 70)';
+  const stops = [[min, [34, 160, 70]], [yellowFrom, [255, 215, 0]], [redFrom, [225, 45, 45]], [max, [135, 55, 190]]];
+  for (let i = 1; i < stops.length; i++) {
+    if (value <= stops[i][0]) {
+      const ratio = Math.max(0, Math.min(1, (value - stops[i - 1][0]) / (stops[i][0] - stops[i - 1][0])));
+      return `rgb(${stops[i][1].map((v, j) => Math.round(stops[i - 1][1][j] + ratio * (v - stops[i - 1][1][j]))).join(', ')})`;
+    }
+  }
+  return 'rgb(135, 55, 190)';
+}
+function makeTree(files) {
+  const root = { name: '/', path: '', children: [], area: 0 };
+  for (const file of files) {
+    const segments = file.path.split('/');
+    let node = root;
+    node.area += file.area;
+    for (let i = 0; i < segments.length - 1; i++) {
+      const path = segments.slice(0, i + 1).join('/');
+      let child = node.children.find(c => c.children && c.path === path);
+      if (!child) { child = { name: segments[i], path, children: [], area: 0 }; node.children.push(child); }
+      child.area += file.area;
+      node = child;
+    }
+    node.children.push({ ...file, name: segments.at(-1) });
+  }
+  if (!Number.isFinite(root.area)) fail('Die Summe der Flächen ist zu groß. Eine kleinere Flächenkennzahl wählen.');
+  return root;
+}
+export async function listMetrics(bytes, options = {}) {
+  const SQL = await (engine ??= initSqlJs());
+  const db = new SQL.Database(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes);
+  try { return [...sources(db, options).catalog].map(([metric, value]) => ({ metric, description: value.description })); }
+  finally { db.close(); }
+}
+export async function calculateTreeMap(bytes, config, options = {}) {
+  const diagnostics = [];
+  let db;
+  try {
+    keys(options, ['include', 'exclude', 'repository', 'codePrefix', 'since', 'until'], 'Optionen');
+    for (const name of ['include', 'exclude']) if (options[name] !== undefined && (!Array.isArray(options[name]) || options[name].some(p => typeof p !== 'string'))) fail(`${name} muss eine Liste von Glob-Mustern sein.`);
+    if (!(bytes instanceof Uint8Array) && !(bytes instanceof ArrayBuffer)) fail('SQLite-Inhalt muss als Uint8Array oder ArrayBuffer übergeben werden.');
+    if (!bytes.byteLength) fail('Die SQLite-Datei ist leer.');
+    const SQL = await (engine ??= initSqlJs());
+    db = new SQL.Database(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes);
+    const { catalog, prefix, base } = sources(db, options);
+    const selected = validate(config, catalog);
+    const needed = new Set([selected.area, ...selected.scores.flatMap(s => s.metrics.map(t => t.metric))]);
+    const files = rows(db, 'SELECT id FROM code_files').map(row => ({ id: row.id, path: join(prefix, row.id), metrics: {} })).filter(file =>
+      (!(options.include?.length) || options.include.some(p => minimatch(file.path, p, { dot: true }))) && !(options.exclude ?? []).some(p => minimatch(file.path, p, { dot: true })));
+    const byPath = new Map(files.map(f => [f.path, f]));
+    for (const metric of needed) {
+      const source = catalog.get(metric);
+      const aggregates = rows(db, `SELECT ${source.file} AS file, SUM(COALESCE(${source.expression},0)) AS value, SUM(CASE WHEN ${source.expression} IS NULL THEN 1 ELSE 0 END) AS missing FROM ${source.from} GROUP BY ${source.file}`, source.params);
+      const missing = [];
+      for (const file of files) file.metrics[metric] = 0;
+      for (const row of aggregates) {
+        let filePath;
+        if (source.git) filePath = normalizePath(row.file);
+        else if (source.table === 'code_diagnostics' && /^(\/|[A-Za-z]:)/.test(row.file ?? '')) {
+          const absolute = normalizePath(row.file);
+          if (!base || !absolute.startsWith(base + '/')) continue;
+          filePath = join(prefix, absolute.slice(base.length + 1));
+        } else filePath = join(prefix, row.file ?? '');
+        const file = byPath.get(filePath);
+        if (!file) continue;
+        if (typeof row.value !== 'number' || !Number.isFinite(row.value)) fail(`Die Kennzahl ${metric} enthält einen ungültigen Zahlenwert für ${file.path}.`);
+        file.metrics[metric] = row.value;
+        if (row.missing) missing.push(file.path);
+      }
+      if (missing.length) diagnostics.push({ severity: 'warning', code: 'missing-values', message: `${metric}: fehlende Messwerte in ${missing.length} Datei(en) als 0 gewertet.`, paths: missing });
+    }
+    const omitted = [];
+    let observedMax = 0;
+    const visible = [];
+    for (const file of files) {
+      file.area = file.metrics[selected.area];
+      file.scores = selected.scores.map(score => {
+        const contributions = score.metrics.map(term => ({ metric: term.metric, value: file.metrics[term.metric], min: term.min, max: Number.isFinite(term.max) ? term.max : null, factor: term.factor, contribution: Math.max(0, Math.min(file.metrics[term.metric], term.max) - term.min) * term.factor }));
+        return { name: score.name, value: contributions.reduce((sum, t) => sum + t.contribution, 0), contributions };
+      });
+      file.heat = file.scores.reduce((product, score) => product * score.value, 1);
+      if (!Number.isFinite(file.heat)) fail(`Score für ${file.path} ist zu groß. Faktoren oder Maxima verkleinern.`);
+      observedMax = Math.max(observedMax, file.heat);
+      if (file.area <= 0) omitted.push(file.path);
+      else visible.push(file);
+    }
+    if (omitted.length) diagnostics.push({ severity: 'warning', code: 'nonpositive-area', message: `${omitted.length} Datei(en) mit Fläche ≤ 0 werden nicht dargestellt.`, paths: omitted });
+    if (!visible.length) diagnostics.push({ severity: 'warning', code: 'empty', message: 'Keine darstellbaren Dateien. Pfadfilter und Flächenkennzahl prüfen.' });
+    const min = selected.heat.min ?? 0;
+    const max = selected.heat.max ?? observedMax;
+    const yellowFrom = selected.heat.yellowFrom ?? min + (max - min) / 3;
+    const redFrom = selected.heat.redFrom ?? min + 2 * (max - min) / 3;
+    if (max < min || (max === min && !(max === 0 && selected.heat.yellowFrom === undefined && selected.heat.redFrom === undefined)) || (max > min && !(min < yellowFrom && yellowFrom < redFrom && redFrom < max))) fail('Farbstützpunkte müssen min < yellowFrom < redFrom < max erfüllen. Nur eine vollständig leere 0-Skala darf zusammenfallen.');
+    const legend = { min, max, yellowFrom, redFrom };
+    for (const file of visible) file.color = colorFor(file.heat, legend);
+    return { ok: true, files: visible, tree: makeTree(visible), legend, areaMetric: selected.area, diagnostics };
+  } catch (error) {
+    diagnostics.push({ severity: 'error', code: 'calculation-failed', message: `Treemap konnte nicht erstellt werden: ${error.message}` });
+    return { ok: false, files: [], tree: null, legend: null, diagnostics };
+  } finally { db?.close(); }
+}

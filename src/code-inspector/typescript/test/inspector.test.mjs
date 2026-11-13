@@ -177,3 +177,13 @@ test('schema creation errors roll back dropped inspector objects',t=>{
  assert.throws(()=>main(args));
  assert.deepEqual(readFileSync(output),before);
 });
+
+test('stores actual UTF-8 file size in bytes, including BOM and CRLF', t => {
+ const text='\uFEFF// Größe 😀\r\nexport const größe = 1;\r\n';
+ const {dir,args}=fixture(t,{'size.ts':text});
+ const result=main(args);
+ assert.equal(result.files[0].size_bytes,Buffer.byteLength(text));
+ const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
+ assert.equal(db.prepare('SELECT size_bytes FROM code_files').get().size_bytes,readFileSync(path.join(dir,'size.ts')).length);
+ assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'4');
+});

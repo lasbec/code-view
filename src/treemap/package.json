@@ -1,0 +1,25 @@
+{
+  "name": "code-view-treemap",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "exports": "./src/index.mjs",
+  "bin": {
+    "code-view-treemap": "./src/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "minimatch": "11.0.8",
+    "sql.js": "1.14.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.0",
+    "jsdom": "27.2.0"
+  }
+}

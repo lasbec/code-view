@@ -178,7 +178,7 @@ Fingerprints are recalculated each run; previous analysis results are not reused
 
 | Key | Value |
 | --- | --- |
-| `schema_version` | `3`. |
+| `schema_version` | `4`. |
 | `analyzer_version` | `1.0.0`. |
 | `typescript_version` | `5.9.3`. |
 | `tsconfig` | Absolute path to the main tsconfig. |

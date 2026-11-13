@@ -21,3 +21,9 @@ Inspect TypeScript projects and Git history, with results stored in SQLite.
 - [Usage](src/git-inspector/usage.md) and [schema](src/git-inspector/git-inspection-result-schema.md).
 
 Neither script requires a SQLite server. The Git inspector needs no pip packages or Node.js.
+
+## Treemap
+
+Generate interactive HTML snippets from inspector SQLite results, with configurable
+area, weighted scores, path filters and a green-to-violet heat scale.
+See [usage](src/treemap/USAGE.md).
