@@ -48,3 +48,16 @@ Syntax and configuration errors abort before writing.
 Foreign-key violations anywhere in the database prevent the commit.
 Other writers are blocked during writing; a failed first run may leave an empty file.
 Exit code `0` means success or help; `1` means an error. Runs are neither continuous nor incremental.
+
+## Progress events
+
+Optional `--progress` emits `CODE_VIEW_PROGRESS ` followed by one JSON object per
+line on stderr. Normal CLI output is unchanged without this flag. Events contain
+`status` (`preparing`, `processing`, `finalizing`), `completed` and `total`. The
+optional `detail` describes preparation activity such as fingerprinting or symbol
+indexing. These preparatory counts are separate from completed files. The
+total is null until known; counts describe processed files or selected commits,
+not elapsed time. Intermediate updates are limited to approximately ten per
+second; initial counts and finalization are always emitted. Finalization can
+continue after the counter reaches its total. A successful process exit confirms
+completion. The local server consumes these events separately from diagnostic logs.

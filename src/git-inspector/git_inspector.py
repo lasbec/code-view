@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 
 
 class InspectionError(Exception):
@@ -184,7 +185,9 @@ def analyze_merge(git, parents, object_dir):
         return 'unknown', [], [], str(error)
 
 
-def inspect(repo, branch, output, limit, mode):
+def inspect(repo, branch, output, limit, mode, progress=None):
+    progress = progress or (lambda *args: None)
+    progress('preparing', 0, None)
     git = Git(Path(repo).resolve())
     version = decode(git.run('--version').stdout).strip()
     match = re.search(r'(\d+)\.(\d+)', version)
@@ -204,6 +207,7 @@ def inspect(repo, branch, output, limit, mode):
     if tip is None:
         raise InspectionError('Branch not found: ' + branch)
     commits = git.run('rev-list', '--topo-order', '--max-count=' + str(limit), tip).stdout.splitlines()
+    progress('processing', 0, len(commits))
     shallow_location = git.run('rev-parse', '--git-path', 'shallow').stdout
     shallow_path = Path(os.fsdecode(shallow_location.rstrip(b'\n')))
     if not shallow_path.is_absolute():
@@ -227,9 +231,10 @@ def inspect(repo, branch, output, limit, mode):
                 db.execute('DELETE FROM git_repositories WHERE path = ?', (repo_path,))
             db.execute('INSERT OR IGNORE INTO git_repositories(path) VALUES (?)', (repo_path,))
             repo_id = db.execute('SELECT id FROM git_repositories WHERE path = ?', (repo_path,)).fetchone()[0]
-            for raw_hash in commits:
+            for completed, raw_hash in enumerate(commits, 1):
                 commit = raw_hash.decode('ascii')
                 if db.execute('SELECT 1 FROM git_commits WHERE repository_id=? AND hash=?', (repo_id, commit)).fetchone():
+                    progress('processing', completed, len(commits))
                     continue
                 metadata = git.run('show', '-s', '--no-show-signature',
                     '--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%P', commit).stdout
@@ -253,6 +258,8 @@ def inspect(repo, branch, output, limit, mode):
                             db.execute('INSERT INTO git_merge_conflict_paths VALUES (?,?,?,?)', (repo_id, commit, position, path))
                     unknown += status == 'unknown'
                 inserted += 1
+                progress('processing', completed, len(commits))
+            progress('finalizing', len(commits), len(commits))
             db.execute('''INSERT INTO git_branches VALUES (?,?,?,?,?)
                 ON CONFLICT(repository_id, name) DO UPDATE SET tip_hash=excluded.tip_hash,
                 commit_limit=excluded.commit_limit, imported_at=excluded.imported_at''',
@@ -273,6 +280,20 @@ def positive_int(value):
     return number
 
 
+def progress_reporter(enabled):
+    last = float('-inf')
+
+    def report(status, completed, total):
+        nonlocal last
+        now = time.monotonic()
+        if not enabled or (status == 'processing' and completed not in (0, total) and now - last < 0.1):
+            return
+        last = now
+        print('CODE_VIEW_PROGRESS ' + json.dumps(dict(status=status, completed=completed, total=total)),
+              file=sys.stderr, flush=True)
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', required=True, type=Path, help='Local repository path')
@@ -280,9 +301,10 @@ def main():
     parser.add_argument('--output', required=True, type=Path, help='New or existing SQLite file')
     parser.add_argument('--commits', required=True, type=positive_int, help='Number of reachable commits to inspect')
     parser.add_argument('--mode', required=True, choices=('append', 'replace'))
+    parser.add_argument('--progress', action='store_true', help='Emit structured progress events on stderr')
     args = parser.parse_args()
     try:
-        selected, inserted, unknown = inspect(args.repo, args.branch, args.output, args.commits, args.mode)
+        selected, inserted, unknown = inspect(args.repo, args.branch, args.output, args.commits, args.mode, progress_reporter(args.progress))
     except (InspectionError, sqlite3.Error, OSError) as error:
         print('Error: ' + str(error), file=sys.stderr)
         return 1

@@ -52,3 +52,14 @@ The inspected repository's working tree, index, branches and object store remain
 Merge reconstruction uses temporary Git objects and does not prove historical conflicts or their resolution.
 The Git version, attributes and merge configuration can affect the result.
 Exit codes: `0` success or help, `1` runtime error, `2` invalid CLI arguments.
+
+## Progress events
+
+Optional `--progress` emits `CODE_VIEW_PROGRESS ` followed by one JSON object per
+line on stderr. Normal CLI output is unchanged without this flag. Events contain
+`status` (`preparing`, `processing`, `finalizing`), `completed` and `total`. The
+total is null until known; counts describe processed files or selected commits,
+not elapsed time. Intermediate updates are limited to approximately ten per
+second; initial counts and finalization are always emitted. Finalization can
+continue after the counter reaches its total. A successful process exit confirms
+completion. The local server consumes these events separately from diagnostic logs.

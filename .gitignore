@@ -2,3 +2,4 @@ node_modules/
 *.sqlite
 *.sqlite-journal
 src/treemap/dist/
+src/server/data/

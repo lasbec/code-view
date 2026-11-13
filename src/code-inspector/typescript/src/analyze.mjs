@@ -11,7 +11,7 @@ const assignment = k => k >= ts.SyntaxKind.FirstAssignment && k <= ts.SyntaxKind
 const unwrap = n => { while (n && (ts.isParenthesizedExpression(n) || ts.isAsExpression(n) || ts.isTypeAssertionExpression(n) || ts.isNonNullExpression(n) || ts.isSatisfiesExpression(n))) n = n.expression; return n; };
 const mutators = new Set(['push','pop','shift','unshift','splice','sort','reverse','fill','copyWithin','set','add','delete','clear']);
 
-export function analyze(project, changedPaths = new Set(project.files.map(f => f.path)), cached = { functions: [], calls: [] }, onFile = () => {}) {
+export function analyze(project, changedPaths = new Set(project.files.map(f => f.path)), cached = { functions: [], calls: [] }, onFile = () => {}, onIndexed = () => {}, onAnalysis = () => {}) {
   const result = { files: [], functions: [], parameters: [], accesses: [], calls: [], references: [], shadows: [], diagnostics: project.diagnostics };
   const byNode = new Map(), byId = new Map();
   const nodeId = n => `${slash(path.relative(project.base, n.getSourceFile().fileName))}:${n.getStart()}`;
@@ -34,6 +34,7 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
       return [];
     }))];
   }
+  let indexed = 0;
   for (const entry of project.files) {
     const { sf, checker } = entry;
     const changed = changedPaths.has(entry.path);
@@ -65,7 +66,7 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
       ts.forEachChild(n, scan);
     }
     scan(sf);
-    if (!changed) continue;
+    if (!changed) { onIndexed(++indexed, project.files.length); continue; }
     const module = checker.getSymbolAtLocation(sf);
     const exports = module ? checker.getExportsOfModule(module) : [];
     const exportedVars = new Set(exports.flatMap(s => {
@@ -73,7 +74,9 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
       return (s.declarations ?? []).filter(d => (ts.isVariableDeclaration(d) || ts.isBindingElement(d)) && d.getSourceFile() === sf && !nearestFunction(d)).map(nodeId);
     }));
     result.files.push({ id: entry.path, size_bytes: statSync(sf.fileName).size, ...lineMetrics(sf), import_statements: imports, imported_bindings: bindings, dynamic_imports: dynamic, reexports, exported_variables: exportedVars.size });
+    onIndexed(++indexed, project.files.length);
   }
+  onAnalysis();
   for (const { sf, checker, path: filePath } of project.files) {
     if (!changedPaths.has(filePath)) continue;
     // Each identifier declaration belongs to its lexical scope. Query the parent scope
