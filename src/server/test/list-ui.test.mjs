@@ -6,7 +6,7 @@ const require = createRequire(new URL('../../treemap/package.json', import.meta.
 const { JSDOM } = require('jsdom');
 const { build } = require('esbuild');
 const rows = [
-  { id:'a', name:'load', path:'a.ts', line:1, kind:'MethodDeclaration', visibility:'private', is_async:0, signature:'(): void', score:0 },
+  { id:'a', name:'load', path:'a.ts', line:1, kind:'MethodDeclaration', visibility:'private', is_async:0, signature:'(): void', score:0, call_depth:4, reachable_internal_count:3, reachable_external_count:2, reachable_symbol_count:5, direct_external_count:0, dependency_complete:0, call_graph_complete:1, direct_external_complete:1 },
   { id:'b', name:'fetch', path:'b.ts', line:2, kind:'ArrowFunction', visibility:'public', is_async:1, signature:'(): Promise<string>', score:10 },
   { id:'c', name:'other', path:'c.ts', line:3, kind:'FunctionDeclaration', visibility:'not_applicable', is_async:0, signature:'(): string', score:null },
 ];
@@ -29,6 +29,11 @@ test('list UI keeps searches independent, supports OR chips, sorting, pagination
   await dom.window.Lists.mountInspectionList(host,options);
   assert.match(host.querySelector('[data-page-count]').textContent,/1 of 2/);
   assert.equal(host.querySelectorAll('[data-sort="call_depth"]').length,1);
+  const dependencyCells=host.querySelector('tr[data-item="a"]').querySelectorAll('td');
+  assert.equal(dependencyCells[4].textContent,'4');
+  assert.equal(dependencyCells[6].textContent,'3');
+  assert.equal(dependencyCells[7].textContent,'≥ 2');
+  assert.equal(dependencyCells[9].textContent,'0');
   assert.equal(host.querySelectorAll('[data-sort="reachable_symbol_count"]').length,1);
   assert.match(host.querySelector('[data-external-results]').textContent,/builtin.Console.log/);
   const externalSearch=host.querySelector('[aria-label="Search external symbols"]');

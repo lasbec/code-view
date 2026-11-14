@@ -34,6 +34,21 @@ test('serialized storage survives restart without losing concurrent changes', as
   await Promise.all([store.update(s => { s.selection.inspection = 'first'; }), store.update(s => { s.selection.preset = 'second'; })]);
   assert.deepEqual((await openStore(dir)).get().selection, { inspection: 'first', preset: 'second' });
 });
+test('saved minimum depth presets migrate to down depth without changing up depth presets', async t => {
+  const dir=await temporary(t), store=await openStore(dir);
+  await store.update(s => {
+    s.presets[0].config.scores[0].metrics=[
+      {metric:'code_functions.minimum_call_depth',aggregation:'max'},
+      {metric:'code_functions.call_depth',aggregation:'max'},
+    ];
+  });
+  const reopened=await openStore(dir), state=reopened.get();
+  assert.deepEqual(state.presets[0].config.scores[0].metrics.map(m=>m.metric),[
+    'code_functions.down_call_depth','code_functions.call_depth',
+  ]);
+  assert.equal(state.presets[0].id,store.get().presets[0].id);
+  assert.deepEqual((await openStore(dir)).get(),state);
+});
 test('HTTP lifecycle handles a branch matching a path, renders results, and retains results on failure and cancellation', { timeout: 60000 }, async t => {
   const dir = await temporary(t), repo = join(dir, 'repository'); await mkdir(repo);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();

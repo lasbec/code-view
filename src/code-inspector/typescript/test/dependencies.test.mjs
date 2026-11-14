@@ -28,6 +28,8 @@ test('budget exhaustion preserves exact counts and leaves depth unknown', () => 
   assert.equal(m.get('a').call_depth,null);
   assert.equal(m.get('c').call_depth,null);
   assert.equal(m.get('c').reachable_internal_count,2);
+  assert.equal(m.get('a').depth_lower_bound,1);
+  assert.equal(m.get('c').depth_lower_bound,2);
 });
 test('memoized SCC depths match exhaustive simple paths on deterministic small graphs', () => {
   let seed=123;
@@ -37,6 +39,60 @@ test('memoized SCC depths match exhaustive simple paths on deterministic small g
     const out=id=>pairs.filter(([a])=>a===id).map(([,b])=>b);
     const brute=(id,seen)=>Math.max(0,...out(id).filter(n=>!seen.has(n)).map(n=>1+brute(n,new Set([...seen,n]))));
     const {metrics}=graph(ids,pairs);
-    for(const id of ids) assert.equal(metrics.get(id).call_depth,brute(id,new Set([id])));
+    const limited=graph(ids,pairs,[],[],{stateBudget:3}).metrics;
+    for(const id of ids) {
+      const exact=brute(id,new Set([id]));
+      assert.equal(metrics.get(id).call_depth,exact);
+      assert.equal(metrics.get(id).depth_lower_bound,exact);
+      assert.ok(limited.get(id).depth_lower_bound>=0 && limited.get(id).depth_lower_bound<=exact);
+    }
   }
+});
+
+test('unresolved values do not invalidate the call graph, but unknown calls do', () => {
+  const {metrics:m} = graph(['root','leaf','caller'], [['root','leaf']], [], [
+    {function_id:'leaf', reason:'unresolved_reference'},
+    {function_id:'caller', reason:'unresolved_call'},
+  ]);
+  assert.equal(m.get('root').call_graph_complete,1);
+  assert.equal(m.get('root').call_depth,1);
+  assert.equal(m.get('leaf').call_graph_complete,1);
+  assert.equal(m.get('root').dependency_complete,0);
+  assert.equal(m.get('root').direct_external_complete,1);
+  assert.equal(m.get('leaf').direct_external_complete,0);
+  assert.equal(m.get('caller').call_graph_complete,0);
+});
+
+test('expanded default budgets handle a cycle beyond the old depth and state limits', () => {
+  const ids = Array.from({length:520}, (_,i)=>String(i));
+  const {metrics} = graph(ids, ids.map((id,i)=>[id,ids[(i+1)%ids.length]]));
+  for (const id of ids) assert.equal(metrics.get(id).call_depth,519);
+});
+
+test('explicit depth budget still stops cyclic searches without losing reachability', () => {
+  const ids=['a','b','c','d'], pairs=[['a','b'],['b','c'],['c','d'],['d','a']];
+  const small=graph(ids,pairs,[],[],{depthBudget:2}).metrics;
+  assert.equal(small.get('a').call_depth,null);
+  assert.equal(small.get('a').reachable_internal_count,4);
+  assert.equal(graph(ids,pairs,[],[],{depthBudget:3}).metrics.get('a').call_depth,3);
+});
+
+test('dense cycles finish within a small state budget once longest possible paths are found', () => {
+  const ids = Array.from({length:12}, (_,i)=>String(i));
+  const pairs = ids.flatMap(a => ids.filter(b => b !== a).map(b => [a,b]));
+  const {metrics} = graph(ids, pairs, [], [], {stateBudget:200});
+  for (const id of ids) assert.equal(metrics.get(id).call_depth,11);
+});
+
+test('pruning includes downstream depth even when exits are visited last', () => {
+  const ids = Array.from({length:12}, (_,i)=>String(i));
+  const pairs = ids.flatMap(a => ids.filter(b => b !== a).map(b => [a,b]));
+  pairs.push(...ids.map(id => [id,'tail']), ['tail','leaf']);
+  const {metrics} = graph([...ids,'tail','leaf'], pairs, [], [], {stateBudget:200});
+  for (const id of ids) assert.equal(metrics.get(id).call_depth,13);
+});
+
+test('a downstream depth budget failure prevents finite upper-bound pruning', () => {
+  const {metrics} = graph(['a','b','c','d'], [['a','b'],['b','a'],['b','c'],['c','d'],['d','c']], [], [], {depthBudget:0});
+  for (const id of ['a','b','c','d']) assert.equal(metrics.get(id).call_depth,null);
 });

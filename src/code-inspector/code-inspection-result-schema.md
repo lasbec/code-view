@@ -1,6 +1,6 @@
 # Code inspection result schema
 
-SQLite, schema version `8`. See [TypeScript usage](typescript/usage.md).
+SQLite, schema version `11`. See [TypeScript usage](typescript/usage.md).
 
 ## Conventions
 
@@ -116,7 +116,8 @@ One row per recorded external-state access or parameter-object mutation.
 | `file_id` | TEXT FK | Call-site file → `code_files.id`. |
 | `target_id` | TEXT | Resolved function ID; `NULL` without a unique analyzed target. |
 | `target_name` | TEXT | Called expression as source text. |
-| `resolution` | TEXT | `resolved`, `ambiguous` or `unknown`. |
+| `resolution` | TEXT | `resolved`, `ambiguous`, `external` or `unknown`. |
+| `is_inferred` | INTEGER | 1 for a target inferred by callback backtracking; otherwise 0. |
 | `kind` | TEXT | `call` for a call, `construct` for `new`. |
 | `line` | INTEGER | Call-site line. |
 | `column` | INTEGER | Call-site column. |
@@ -182,7 +183,7 @@ Fingerprints are recalculated each run; previous analysis results are not reused
 
 | Key | Value |
 | --- | --- |
-| `schema_version` | `8`. |
+| `schema_version` | `11`. |
 | `analyzer_version` | `1.0.0`. |
 | `typescript_version` | `5.9.3`. |
 | `tsconfig` | Absolute path to the main tsconfig. |
@@ -243,24 +244,45 @@ Exported means exported by the defining module, including aliases and default
 exports; methods of exported classes are not themselves module exports.
 Only function implementations with bodies are included, as before.
 
-## Function dependencies (schema version 8)
+## Function dependencies (schema version 11)
 
 `code_functions` adds these numeric score metrics:
 
 | Column | Meaning |
 | --- | --- |
-| `call_depth` | Longest internal call path in edges without repeating a function. `NULL` when exact search exceeds its budget or depends on an unavailable depth. |
+| `call_depth` | Up +2 call depth (internal): longest internal path, including callback targets traced backwards through up to two argument bindings, without repeating a function. `NULL` when exact search exceeds its budget or depends on an unavailable depth. |
+| `down_call_depth` | Down call depth (internal): longest path on the original graph of directly resolved calls, excluding inferred callback edges. Nonnegative, including zero. Uses a discovered lower bound when exact search exhausts its budget; remains eligible for scoring with incomplete graphs. |
 | `reachable_internal_count` | Distinct reachable functions; includes the starting function only when reached through a cycle. |
 | `reachable_external_count` | Distinct external runtime functions and values referenced directly or by reachable internal functions. |
 | `reachable_symbol_count` | Internal and external reachable counts combined. |
 | `direct_external_count` | Distinct external symbols referenced directly in the function body, excluding nested function bodies. |
-| `dependency_complete` | `0` indicates unresolved dependencies in the reachable graph. Counts and known depths are lower bounds and excluded from scores. |
+| `dependency_complete` | `0` indicates unresolved symbol dependencies in the reachable graph. External/total reachable symbol counts are lower bounds and excluded from scores. |
+| `call_graph_complete` | `0` indicates unresolved or excluded internal calls in the reachable graph. Controls score eligibility for Up +2 depth and internal reachability; Down depth is eligible independently of this flag. Unresolved value references do not affect it. |
+| `direct_external_complete` | Completeness of runtime symbol references in this function body, independent of downstream functions. Controls direct external count score eligibility. |
 | `dependency_group_id` | Shared SCC summary in `code_dependency_groups`. |
 
-`code_dependency_groups(id TEXT PK, reachable_functions TEXT, external_symbols TEXT, complete INTEGER)` stores sorted JSON arrays of function IDs and external symbol IDs once per strongly connected component. Reachability stops at external symbols. Exact depths use memoized visited-set states inside each SCC, with a budget of 100,000 states per component and 512 nested search steps; downstream SCC results are reused.
+`code_dependency_groups(id TEXT PK, reachable_functions TEXT, external_symbols TEXT, complete INTEGER)` stores sorted JSON arrays of function IDs and external symbol IDs once per strongly connected component. Reachability stops at external symbols. Exact depths use memoized visited-set states inside each SCC, with a budget of 1,000,000 states per component and 5,120 nested search steps (using an explicit stack); downstream SCC results are reused.
 
 `code_external_references` stores occurrence rows: `id INTEGER PK`, `symbol_id`, `name`, `origin`, `symbol_kind` (`function` or `value`), `file_id`, nullable `function_id`, `alias` (source expression), usage `kind`, `line`, `column`. Original compiler symbols are deduplicated by qualified module/name identity. Package submodules remain distinct. Unused imports and type-only references are excluded. Built-ins have origin `builtin`; package declarations have the package name as origin.
 
 `code_unknown_references(id INTEGER PK, file_id TEXT, function_id TEXT, expression TEXT, reason TEXT, line INTEGER, column INTEGER)` records unresolved runtime uses, including excluded internal calls. Unknown does not imply external. `code_calls.resolution` additionally supports `external`.
 
 Metadata `repository` records the repository boundary: explicit `--repository`, otherwise the Git root, falling back to the tsconfig directory. Installed packages are external even within that directory. Source filters do not redefine this boundary.
+
+Schema version 9 separates symbol completeness from call-graph completeness. A depth of `NULL` is still excluded regardless of completeness. Existing version 8 databases retain the conservative old scoring rules until inspection is rerun.
+
+Schema version 11 separates the original Down graph from the Up +2 graph. `code_calls.is_inferred` is 1 for callback edges and 0 for ordinary calls. Down depth excludes inferred edges; Up +2 depth and other dependency summaries include them. The temporary `minimum_call_depth` column and metric are removed. Old databases require a fresh inspection to obtain Down depth. Saved server presets using the temporary metric migrate to `code_functions.down_call_depth`. Callback parameters are traced backwards through at most two argument bindings; inferred targets produce separate call edges at the callback invocation. Incomplete argument sets retain an unresolved-call record.
+
+### Function argument usage (schema version 12)
+
+`code_functions` adds nullable integer fields
+`function_argument_usage_internal` and `function_argument_usage_external`, integer
+lower bounds `minimum_function_argument_usage_internal` and
+`minimum_function_argument_usage_external`, and the integer flag
+`function_argument_usage_complete` (0/1). The exact fields are NULL for incomplete
+measurements; minima remain available for scoring. Counts union argument
+positions reachable through internal calls and passed internal functions,
+including constructors and anonymous callbacks. The recipient determines
+internal/external classification. Package and builtin implementations are not
+traversed. Function-level values can be aggregated for files with the standard
+metric aggregations; there is no separately calculated file-level reachability.

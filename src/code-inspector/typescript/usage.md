@@ -71,4 +71,39 @@ completion. The local server consumes these events separately from diagnostic lo
 Rerun inspection to populate internal call depth and direct/transitive dependency counts.
 Cycles contribute to depth until a function would repeat. Reachable sets include the starting function when a call path returns to it. External functions and values count once; their implementations are not followed. Passing a function as an argument alone does not create an internal call edge.
 
-All five dependency metrics are selectable for scores. Unresolved dependencies produce lower bounds, excluded from scoring; an exhausted exact-depth budget produces an undetermined depth. The function list supports sorting by all five metrics, and includes a searchable repository-wide external-symbol catalogue with aliases and source locations. Function details show reachable functions, external references and unresolved dependencies.
+Two internal depth metrics are selectable for scores:
+
+- **Up +2 call depth (internal)** (`code_functions.call_depth`) follows known calls and callback targets traced backwards through up to two argument bindings. Incomplete call graphs and undetermined exact depths are excluded from its scores.
+- **Down call depth (internal)** (`code_functions.down_call_depth`) follows the original directly resolved call graph without callback backtracking. Every function has a nonnegative value, including zero. Incomplete graphs remain usable; if exact search exhausts its budget, the metric retains a discovered lower bound. It replaces the temporary Minimum internal call depth metric.
+
+Both metrics count edges without repeating a function. Each graph uses at most 1,000,000 search states per cycle component and 5,120 nested search steps. Searches stop when a path reaches the proven upper bound. If inference adds no call edges, both metrics reuse the same search. Rerun inspection to obtain the separate graphs and depth values; older databases cannot reconstruct the original Down graph after callback targets have been combined. Existing saved Minimum internal call depth presets migrate to Down call depth (internal).
+
+Unresolved value references affect symbol counts but leave depth and internal reachability usable. Reachable internal functions still requires a complete call graph for scoring. Direct external counts depend only on references in the function body. The function list supports sorting by dependency metrics, and includes a searchable repository-wide external-symbol catalogue with aliases and source locations. Function details show reachable functions, external references and unresolved dependencies.
+
+Callback calls through parameters are resolved backwards across at most two call sites (a direct argument binding and one forwarding function). Known targets are combined; unknown arguments, exported or escaped entry points, reassigned parameters, spreads, and longer forwarding chains remain incomplete. Resolution is cached and limited to 100,000 work steps per inspection and 256 targets per parameter query. Each inferred target creates a call edge at the original callback invocation; passing a function alone still creates no call edge. Callback inference does not strengthen termination proofs.
+
+### Function as argument usage
+
+The inspector records `function_argument_usage_internal` and
+`function_argument_usage_external` on each function. Each function-valued
+argument position at a call or constructor site counts once. The recipient
+classifies the site as internal or external (packages, builtins, or sources
+outside the repository). Anonymous callbacks and recognizable forwarded
+function parameters are included.
+
+Counts include the starting function and recursively reachable internal callees
+and internal functions passed as arguments, even if a callback might never run.
+Each reachable argument position counts once per starting function, including in
+cycles or diamonds. External implementations are never traversed. Excluded
+project code is unknown internal code, not external code.
+
+Callback target inference uses the existing two-binding limit. Unresolved calls,
+possibly function-valued arguments, spread arguments, missing internal bodies,
+and incomplete callback resolution make `function_argument_usage_complete` zero.
+Both exact fields are then NULL. The corresponding
+`minimum_function_argument_usage_internal` and
+`minimum_function_argument_usage_external` retain the known lower bounds and
+remain usable in scores. Details show incomplete minima with ≥. File metrics
+aggregate the function values using the selected sum, max, min, quantile or count;
+summing can count shared reachable sites once for each starting function.
+A new inspection is required to populate these columns in older databases.

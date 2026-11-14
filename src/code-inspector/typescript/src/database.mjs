@@ -14,7 +14,8 @@ CREATE TABLE code_functions (
  name TEXT, signature TEXT, kind TEXT, visibility TEXT, is_static INTEGER, is_async INTEGER, is_generator INTEGER, is_exported INTEGER, line INTEGER, column INTEGER, end_line INTEGER,
  total_lines INTEGER, blank_lines INTEGER, comment_lines INTEGER, lines_with_comments INTEGER, effective_lines INTEGER,
  max_nesting INTEGER, cyclomatic_complexity INTEGER, cognitive_complexity INTEGER,
- call_depth INTEGER, reachable_internal_count INTEGER, reachable_external_count INTEGER, reachable_symbol_count INTEGER, direct_external_count INTEGER, dependency_complete INTEGER, dependency_group_id TEXT,
+ function_argument_usage_internal INTEGER, function_argument_usage_external INTEGER, minimum_function_argument_usage_internal INTEGER, minimum_function_argument_usage_external INTEGER, function_argument_usage_complete INTEGER,
+ call_depth INTEGER, down_call_depth INTEGER NOT NULL DEFAULT 0, reachable_internal_count INTEGER, reachable_external_count INTEGER, reachable_symbol_count INTEGER, direct_external_count INTEGER, dependency_complete INTEGER, call_graph_complete INTEGER, direct_external_complete INTEGER, dependency_group_id TEXT,
  termination TEXT CHECK(termination IN ('terminates','unknown')), termination_reason TEXT, termination_candidate INTEGER, shadowing_count INTEGER
 );
 CREATE TABLE code_external_references (id INTEGER PRIMARY KEY, symbol_id TEXT, name TEXT, origin TEXT, symbol_kind TEXT, file_id TEXT REFERENCES code_files(id), function_id TEXT REFERENCES code_functions(id), alias TEXT, kind TEXT, line INTEGER, column INTEGER);
@@ -35,7 +36,7 @@ CREATE TABLE code_accesses (
 );
 CREATE TABLE code_calls (
  id INTEGER PRIMARY KEY, caller_id TEXT REFERENCES code_functions(id), file_id TEXT REFERENCES code_files(id), target_id TEXT,
- target_name TEXT, resolution TEXT, kind TEXT, line INTEGER, column INTEGER
+ target_name TEXT, resolution TEXT, is_inferred INTEGER NOT NULL DEFAULT 0, kind TEXT, line INTEGER, column INTEGER
 );
 CREATE TABLE code_function_references (
  id INTEGER PRIMARY KEY, function_id TEXT REFERENCES code_functions(id), file_id TEXT REFERENCES code_files(id), target_id TEXT,
@@ -69,7 +70,7 @@ export function openDatabase(output, project) {
     for (const index of ['code_calls_caller', 'code_calls_target', 'code_accesses_function', 'code_references_target']) db.exec(`DROP INDEX IF EXISTS ${index}`);
     for (const table of ['code_external_references', 'code_unknown_references', 'code_dependency_groups', 'code_symbol_references', 'code_imports', 'code_exports', 'code_accesses', 'code_shadowing', 'code_parameters', 'code_calls', 'code_function_references', 'code_file_state', 'code_functions', 'code_files', 'code_diagnostics', 'code_metadata']) db.exec(`DROP TABLE IF EXISTS ${table}`);
     db.exec(schema);
-    db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('schema_version', '8');
+    db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('schema_version', '12');
     db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('tsconfig', project.configPath);
     return db;
   } catch (error) { db.close(); throw error; }

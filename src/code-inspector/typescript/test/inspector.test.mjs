@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { main } from '../src/main.mjs';
 import { loadProject } from '../src/project.mjs';
+import { analyze } from '../src/analyze.mjs';
 function fixture(t, files) {
  const dir = mkdtempSync(path.join(tmpdir(), 'ts-inspector-'));
  t.after(() => rmSync(dir, {recursive:true,force:true}));
@@ -13,6 +14,64 @@ function fixture(t, files) {
  for(const [name,text] of Object.entries(files)) writeFileSync(path.join(dir,name),text);
  return {dir,args:['-p',path.join(dir,'tsconfig.json'),'-o',path.join(dir,'out.sqlite')]};
 }
+test('callback targets follow two call sites and preserve unresolved alternatives', t => {
+ const {dir}=fixture(t,{'a.ts':`
+function leaf() {}
+function deep() { leaf(); }
+function run(cb:()=>void) { cb(); }
+function forward(cb:()=>void) { run(cb); }
+forward(deep); run(leaf);
+function third(cb:()=>void) { forward(cb); }
+third(leaf);
+function direct(cb:()=>void) { cb(); }
+direct(leaf); direct(deep);
+function cycle(cb:()=>void) { cb(); }
+function again() { cycle(again); }
+again();
+function partial(cb:()=>void) { cb(); }
+partial(leaf); partial(missing);
+export function publicRun(cb:()=>void) { cb(); }
+publicRun(deep);
+function changed(cb:()=>void) { cb=missing; cb(); }
+changed(leaf);
+function spread(cb:()=>void) { cb(); }
+spread(leaf); spread(...missing);
+function escaped(cb:()=>void) { cb(); }
+escaped(deep); unknownConsumer(escaped);
+`});
+ const r=analyze(loadProject(path.join(dir,'tsconfig.json'))), fn=n=>r.functions.find(f=>f.name===n);
+ const targets=n=>r.calls.filter(c=>c.caller_id===fn(n).id).map(c=>r.functions.find(f=>f.id===c.target_id)?.name);
+ assert.deepEqual(new Set(targets('run')),new Set(['leaf','deep']));
+ assert.deepEqual(new Set(targets('direct')),new Set(['leaf','deep']));
+ assert.deepEqual(targets('cycle'),['again']);
+ assert.deepEqual(targets('partial'),['leaf']);
+ assert.deepEqual(targets('publicRun'),['deep']);
+ assert.ok(!targets('changed').includes('leaf'));
+ const unknown=n=>r.unknownReferences.some(u=>u.function_id===fn(n).id&&u.reason==='unresolved_call');
+ assert.equal(unknown('direct'),false);
+ assert.equal(unknown('cycle'),false);
+ for (const n of ['run','partial','publicRun','changed','spread','escaped']) assert.equal(unknown(n),true,n);
+});
+
+test('two-hop callback depth is persisted and complete for local functions', t => {
+ const {dir,args}=fixture(t,{'a.ts':`
+function leaf() {}
+function deep() { leaf(); }
+function run(cb:()=>void) { cb(); }
+function forward(cb:()=>void) { run(cb); }
+forward(deep);
+`});
+ const r=main(args), run=r.functions.find(f=>f.name==='run');
+ assert.equal(run.call_depth,2);
+ assert.equal(run.down_call_depth,0);
+ assert.equal(r.functions.find(f=>f.name==='forward').down_call_depth,1);
+ assert.equal(r.functions.find(f=>f.name==='forward').call_depth,3);
+ assert.equal(run.call_graph_complete,1);
+ const db=new DatabaseSync(path.join(dir,'out.sqlite')); t.after(()=>db.close());
+ assert.equal(db.prepare('SELECT down_call_depth FROM code_functions WHERE id=?').get(run.id).down_call_depth,0);
+ assert.equal(db.prepare('SELECT COUNT(*) AS n FROM code_calls WHERE caller_id=? AND is_inferred=1').get(run.id).n,1);
+ assert.ok(!db.prepare('PRAGMA table_info(code_functions)').all().some(c=>c.name==='minimum_call_depth'));
+});
 test('graph, mutation visibility, shadowing, termination and database integrity', t => {
  const {dir,args}=fixture(t,{
  'b.ts':'export function leaf(x:number) { return x+1; }',
@@ -207,7 +266,7 @@ test('stores actual UTF-8 file size in bytes, including BOM and CRLF', t => {
  assert.equal(result.files[0].size_bytes,Buffer.byteLength(text));
  const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
  assert.equal(db.prepare('SELECT size_bytes FROM code_files').get().size_bytes,readFileSync(path.join(dir,'size.ts')).length);
- assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'8');
+ assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'12');
 });
 
 test('iteration targets and destructuring defaults are writes; branch aliases retain possible origins', t => {
@@ -297,6 +356,8 @@ export function gap() { hidden(); }
 export function dynamic(f:()=>void) { f(); }
 export function pass() { console.log(A); }
 export function builtinValue() { return undefined; }
+export function values() { return notDeclared; }
+export function valuesCaller() { return values(); }
 `, 'b.ts':'export function hidden() {}'});
  const r=main([...args,'--exclude','b.ts']), byName=new Map(r.functions.map(f=>[f.name,f]));
  assert.equal(byName.get('B').call_depth,1);
@@ -308,8 +369,15 @@ export function builtinValue() { return undefined; }
  assert.equal(byName.get('gap').dependency_complete,0);
  assert.equal(byName.get('dynamic').dependency_complete,0);
  assert.equal(byName.get('A').dependency_complete,1);
+ assert.equal(byName.get('valuesCaller').call_graph_complete,1);
+ assert.equal(byName.get('valuesCaller').dependency_complete,0);
+ assert.equal(byName.get('valuesCaller').call_depth,1);
+ assert.equal(byName.get('valuesCaller').direct_external_complete,1);
+ assert.equal(byName.get('values').direct_external_complete,0);
+ assert.equal(byName.get('gap').call_graph_complete,0);
  const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
  assert.equal(db.prepare('SELECT call_depth FROM code_functions WHERE name=?').get('C').call_depth,2);
+ assert.equal(db.prepare('SELECT call_graph_complete FROM code_functions WHERE name=?').get('valuesCaller').call_graph_complete,1);
  assert.deepEqual(db.prepare('SELECT DISTINCT name FROM code_external_references ORDER BY name').all().map(r=>r.name),['builtin.Console.log','builtin.Math.PI','builtin.undefined']);
  assert.equal(byName.get('builtinValue').direct_external_count,1);
  assert.ok(db.prepare('SELECT * FROM code_unknown_references WHERE reason=?').get('excluded_internal'));

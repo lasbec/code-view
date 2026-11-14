@@ -550,3 +550,49 @@ test('dependency metrics omit incomplete and budget-exhausted values from scores
  assert.equal(children.find(f=>f.id==='f2').heat,null);
  assert.equal(children.find(f=>f.id==='f3').heat,null);
 });
+
+test('down depth colors all functions independently of up depth and completeness', async t => {
+ const {input}=functionFixture(t),db=new DatabaseSync(input);
+ db.exec(`ALTER TABLE code_functions ADD COLUMN call_depth INTEGER;
+ ALTER TABLE code_functions ADD COLUMN dependency_complete INTEGER DEFAULT 0;
+ UPDATE code_functions SET call_depth=7;
+ UPDATE code_functions SET call_depth=NULL WHERE id='f3';`);
+ db.close();
+ const metric='code_functions.down_call_depth';
+ assert.ok(!(await listMetrics(readFileSync(input))).some(m=>m.metric===metric));
+ const updated=new DatabaseSync(input);
+ updated.exec(`ALTER TABLE code_functions ADD COLUMN down_call_depth INTEGER DEFAULT 4;
+   UPDATE code_functions SET down_call_depth=0 WHERE id='f3';`);
+ updated.close();
+ const bytes=readFileSync(input), catalog=await listMetrics(bytes);
+ assert.equal(catalog.find(m=>m.metric===metric).label,'Down call depth (internal)');
+ assert.equal(catalog.find(m=>m.metric==='code_functions.call_depth').label,'Up +2 call depth (internal)');
+ assert.ok(!catalog.some(m=>m.metric==='code_functions.minimum_call_depth'));
+ const result=await calculateTreeMap(bytes,{scores:[{normalize:false,metrics:[{metric}]}]},{showFunctions:true});
+ assert.equal(result.ok,true,JSON.stringify(result.diagnostics));
+ const children=result.files.flatMap(f=>f.children ?? []);
+ assert.equal(children.find(f=>f.id==='f1').heat,4);
+ assert.equal(children.find(f=>f.id==='f3').heat,0);
+ assert.ok(result.files.every(f=>f.heat!==null));
+});
+
+test('call depth and internal reachability score independently of unknown value references', async t => {
+ const {input}=functionFixture(t),db=new DatabaseSync(input);
+ db.exec(`ALTER TABLE code_functions ADD COLUMN call_depth INTEGER DEFAULT 7;
+ ALTER TABLE code_functions ADD COLUMN reachable_internal_count INTEGER DEFAULT 3;
+ ALTER TABLE code_functions ADD COLUMN direct_external_count INTEGER DEFAULT 0;
+ ALTER TABLE code_functions ADD COLUMN reachable_external_count INTEGER DEFAULT 2;
+ ALTER TABLE code_functions ADD COLUMN dependency_complete INTEGER DEFAULT 0;
+ ALTER TABLE code_functions ADD COLUMN call_graph_complete INTEGER DEFAULT 0;
+ ALTER TABLE code_functions ADD COLUMN direct_external_complete INTEGER DEFAULT 1;
+ UPDATE code_functions SET call_graph_complete=1,direct_external_complete=0 WHERE id='f1';`);
+ db.close();
+ const bytes=readFileSync(input);
+ for(const [field,first,second] of [['call_depth',7,null],['reachable_internal_count',3,null],['direct_external_count',null,0],['reachable_external_count',null,null]]) {
+  const result=await calculateTreeMap(bytes,{scores:[{normalize:false,metrics:[{metric:`code_functions.${field}`}]}]},{showFunctions:true});
+  assert.equal(result.ok,true,JSON.stringify(result.diagnostics));
+  const children=result.files.flatMap(f=>f.children ?? []);
+  assert.equal(children.find(f=>f.id==='f1').heat,first,field);
+  assert.equal(children.find(f=>f.id==='f2').heat,second,field);
+ }
+});

@@ -60,8 +60,9 @@ export async function inspectDetail(path, config, id, kind, model, expanded) {
     const relevant = groups.filter(g => kind === 'function' ? g.id === entity.dependency_group_id : functions.some(f => owned.has(f.id) && f.dependency_group_id === g.id));
     const reachableFunctions = [...new Set(relevant.flatMap(g => JSON.parse(g.reachable_functions)))];
     const reachableSymbols = new Set(relevant.flatMap(g => JSON.parse(g.external_symbols)));
-    if (entity.dependency_complete === 0) warnings.push('Dependency analysis is incomplete. Counts and known paths are lower bounds and are excluded from scores.');
-    if (kind === 'function' && entity.dependency_complete != null && entity.call_depth == null) warnings.push('Exact depth is undetermined: the search budget was exceeded or a downstream depth is unavailable.');
+    if (entity.dependency_complete === 0) warnings.push('Symbol dependencies are incomplete. Affected symbol counts are lower bounds and excluded from scores. Call depth and internal reachability remain usable when the call graph is complete.');
+    if ((entity.call_graph_complete ?? entity.dependency_complete) === 0) warnings.push('The call graph is incomplete. Up +2 call depth (internal) and internal reachability are lower bounds and excluded from scores. Down call depth (internal) remains usable.');
+    if (kind === 'function' && entity.dependency_complete != null && entity.call_depth == null) warnings.push('Exact Up +2 call depth (internal) is undetermined: the search budget was exceeded or a downstream depth is unavailable. Down call depth (internal) remains usable.');
     return { kind, entity, reachableFunctions,
       directExternalReferences: externalReferences.filter(r => kind === 'function' ? r.function_id === id : r.file_id === fileId),
       reachableExternalReferences: externalReferences.filter(r => reachableSymbols.has(r.symbol_id) && (reachableFunctions.includes(r.function_id) || (kind === 'function' ? r.function_id === id : owned.has(r.function_id)))),

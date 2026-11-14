@@ -54,13 +54,21 @@ count('git_merge_conflict_files', 'Reconstructed conflicting merges', 'Reconstru
 count('git_merge_conflicts', 'Reconstructed conflict messages', 'Structured conflict messages associated with this path; several can occur in one merge.');
 
 for (const [field, label, description] of [
-  ['call_depth', 'Internal call depth', 'Longest internal call path without repeating a function. Cycles contribute their length; exact search has a state budget.'],
+  ['call_depth', 'Up +2 call depth (internal)', 'Longest internal call path including callback targets traced backwards through up to two argument bindings. Functions do not repeat; exact search has a state budget.'],
   ['reachable_internal_count', 'Reachable internal functions', 'Distinct reachable functions, including the starting function only if reached again.'],
   ['reachable_external_count', 'Reachable external symbols', 'Distinct external runtime functions and values referenced directly or by reachable internal functions.'],
   ['reachable_symbol_count', 'Reachable symbols total', 'Reachable internal functions plus external symbols.'],
   ['direct_external_count', 'Direct external symbols', 'Distinct external runtime symbols referenced in this function body.'],
 ]) {
-  add('code_functions', field, label, `${description} Incomplete measurements are excluded from scores.`, { nullable: true });
+  add('code_functions', field, label, `${description} Incomplete measurements are excluded from scores.`, { nullable: true, completenessField: ['call_depth', 'reachable_internal_count'].includes(field) ? 'call_graph_complete' : field === 'direct_external_count' ? 'direct_external_complete' : 'dependency_complete' });
+}
+
+add('code_functions', 'down_call_depth', 'Down call depth (internal)', 'Longest known internal call path following directly resolved calls, without callback backtracking. Includes incomplete graphs and retains a lower bound if the search budget is exhausted; zero means no deeper path has been established.');
+
+for (const kind of ['internal', 'external']) {
+  const description = `Function argument positions passed to ${kind} recipients in this function and recursively reachable internal callees and callbacks. Each reachable position counts once; packages and builtins are not traversed. File aggregation combines function values and can count shared sites repeatedly.`;
+  add('code_functions', `function_argument_usage_${kind}`, `Function as argument usage (${kind})`, `${description} Incomplete measurements are excluded from scores.`, { nullable: true, completenessField: 'function_argument_usage_complete' });
+  add('code_functions', `minimum_function_argument_usage_${kind}`, `Minimum function as argument usage (${kind})`, `${description} Includes known lower bounds from incomplete analysis in scores. When function_argument_usage_complete is zero, the value is a lower bound.`);
 }
 
 export const metricCatalog = entries;

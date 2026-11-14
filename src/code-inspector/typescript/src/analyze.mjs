@@ -4,6 +4,7 @@ import { statSync } from 'node:fs';
 import { isFunction, walkOwn, lineMetrics, functionMetrics } from './metrics.mjs';
 import { slash } from './project.mjs';
 import { solveTermination } from './termination.mjs';
+import { callbackResolver } from './callbacks.mjs';
 const nearestFunction = node => { for (let n = node?.parent; n; n = n.parent) if (isFunction(n)) return n; return null; };
 const location = n => { const p = n.getSourceFile().getLineAndCharacterOfPosition(n.getStart()); return { line: p.line + 1, column: p.character + 1 }; };
 const bindingNames = n => ts.isIdentifier(n) ? [n] : n.elements.flatMap(e => ts.isOmittedExpression(e) ? [] : bindingNames(e.name));
@@ -12,7 +13,7 @@ const unwrap = n => { while (n && (ts.isParenthesizedExpression(n) || ts.isAsExp
 const mutators = new Set(['push','pop','shift','unshift','splice','sort','reverse','fill','copyWithin','set','add','delete','clear']);
 
 export function analyze(project, changedPaths = new Set(project.files.map(f => f.path)), cached = { functions: [], calls: [] }, onFile = () => {}, onIndexed = () => {}, onAnalysis = () => {}) {
-  const result = { files: [], functions: [], parameters: [], accesses: [], calls: [], references: [], symbolReferences: [], externalReferences: [], unknownReferences: [], imports: [], exports: [], shadows: [], diagnostics: project.diagnostics };
+  const result = { files: [], functions: [], parameters: [], accesses: [], calls: [], argumentUsages: [], references: [], symbolReferences: [], externalReferences: [], unknownReferences: [], imports: [], exports: [], shadows: [], diagnostics: project.diagnostics };
   const byNode = new Map(), byId = new Map();
   const nodeId = n => `${slash(path.relative(project.base, n.getSourceFile().fileName))}:${n.getStart()}`;
   function symbol(checker, n) {
@@ -105,6 +106,7 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
     onIndexed(++indexed, project.files.length);
   }
   onAnalysis();
+  const resolveCallback = callbackResolver(project, { targets, symbol, unwrap, byNode });
   for (const { sf, checker, path: filePath } of project.files) {
     if (!changedPaths.has(filePath)) continue;
     // Each identifier declaration belongs to its lexical scope. Query the parent scope
@@ -227,13 +229,46 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
       if (isFunction(n)) owner = byNode.get(n);
       if (ts.isTypeNode(n) || ts.isImportDeclaration(n) || ts.isImportEqualsDeclaration(n)) return;
       if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
+        const callStart = result.calls.length;
         let candidates = targets(checker, n.expression);
         const signature = checker.getResolvedSignature(n), decl = signature?.declaration;
         if (decl && isFunction(decl) && !candidates.length) candidates = [decl];
-        const target = candidates.length === 1 ? nodeId(candidates[0]) : null;
-        result.calls.push({ caller_id: owner?.id ?? null, file_id: filePath, target_id: target && byId.has(target) ? target : null, target_name: n.expression.getText(sf), resolution: target && byId.has(target) ? 'resolved' : external(n.expression) ? 'external' : candidates.length > 1 ? 'ambiguous' : 'unknown', kind: ts.isNewExpression(n) ? 'construct' : 'call', ...location(n) });
-        if ((!target || !byId.has(target)) && !external(n.expression)) result.unknownReferences.push({ file_id: filePath, function_id: owner?.id ?? null, expression: n.expression.getText(sf), reason: target ? 'excluded_internal' : 'unresolved_call', ...location(n) });
-        if (owner && (!target || !byId.has(target))) owner.unsafe = true;
+        const inferred = !candidates.length && !external(n.expression) ? resolveCallback(n.expression, checker) : null;
+        if (inferred?.targets.length) {
+          let complete = inferred.complete;
+          for (const candidate of inferred.targets) {
+            const id = nodeId(candidate), included = byId.has(id);
+            complete &&= included;
+            result.calls.push({ caller_id: owner?.id ?? null, file_id: filePath, target_id: included ? id : null, target_name: n.expression.getText(sf), resolution: included ? 'resolved' : 'unknown', is_inferred: 1, kind: ts.isNewExpression(n) ? 'construct' : 'call', ...location(n) });
+          }
+          if (!complete) result.unknownReferences.push({ file_id: filePath, function_id: owner?.id ?? null, expression: n.expression.getText(sf), reason: 'unresolved_call', ...location(n) });
+          // Keep the existing conservative termination classification for indirect calls.
+          if (owner) owner.unsafe = true;
+        } else {
+          const target = candidates.length === 1 ? nodeId(candidates[0]) : null;
+          result.calls.push({ caller_id: owner?.id ?? null, file_id: filePath, target_id: target && byId.has(target) ? target : null, target_name: n.expression.getText(sf), resolution: target && byId.has(target) ? 'resolved' : external(n.expression) ? 'external' : candidates.length > 1 ? 'ambiguous' : 'unknown', is_inferred: 0, kind: ts.isNewExpression(n) ? 'construct' : 'call', ...location(n) });
+          if ((!target || !byId.has(target)) && !external(n.expression)) result.unknownReferences.push({ file_id: filePath, function_id: owner?.id ?? null, expression: n.expression.getText(sf), reason: target ? 'excluded_internal' : 'unresolved_call', ...location(n) });
+          if (owner && (!target || !byId.has(target))) owner.unsafe = true;
+        }
+        if (owner) {
+          const receivers = result.calls.slice(callStart);
+          const category = receivers.every(c => c.resolution === 'resolved') ? 'internal'
+            : receivers.every(c => c.resolution === 'external') ? 'external' : null;
+          for (const [index, argument] of (n.arguments ?? []).entries()) {
+            const type = checker.getTypeAtLocation(argument);
+            const parts = type.isUnion?.() ? type.types : [type];
+            const callable = t => t.getCallSignatures().length > 0 || t.getConstructSignatures().length > 0;
+            const definite = parts.every(callable);
+            const possible = definite || parts.some(t => callable(t) || !!(t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter))) || ts.isSpreadElement(argument);
+            if (!possible) continue;
+            const value = definite ? resolveCallback(argument, checker) : { targets: [], complete: false };
+            const internal = value.targets.filter(target => byNode.has(target)).map(nodeId);
+            const externalArgument = definite && !!external(unwrap(argument));
+            result.argumentUsages.push({ function_id: owner.id, site: `${nodeId(n)}/${index}`,
+              category, counted: Number(definite && category !== null && !ts.isSpreadElement(argument)),
+              targets: internal, complete: Number(definite && category !== null && (externalArgument || value.complete && internal.length === value.targets.length)) });
+          }
+        }
       }
       if ((runtimeName(n) || ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && !ts.isImportDeclaration(n.parent)) {
         // Namespace roots are not separate symbols; property reads remain references.

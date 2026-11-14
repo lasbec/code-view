@@ -59,6 +59,22 @@ export async function openStore(directory) {
     await rename(`${file}.tmp`, file);
   }
   let queue = Promise.resolve();
+  // Preserve saved configurations that used the temporary minimum-depth metric.
+  let migratedDepth = false;
+  for (const preset of state.presets) {
+    const migrate = id => {
+      if (id !== 'code_functions.minimum_call_depth') return id;
+      migratedDepth = true;
+      return 'code_functions.down_call_depth';
+    };
+    const config = preset.config;
+    for (const field of ['area', 'functionArea']) if (config[field]) config[field] = migrate(config[field]);
+    for (const score of config.scores) for (const term of score.metrics) term.metric = migrate(term.metric);
+  }
+  if (migratedDepth) {
+    await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+  }
   return {
     get: () => structuredClone(state),
     update(change) {

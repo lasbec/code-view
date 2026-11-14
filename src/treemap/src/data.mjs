@@ -98,7 +98,8 @@ function sources(db, options) {
         continue;
       }
       if (table !== source.table || field !== 'count' && !columns.has(field)) continue;
-      catalog.set(entry.metric, { ...entry, ...source, expression: field === 'count' ? '1' : entry.nullable ? `CASE WHEN t.dependency_complete=1 THEN t.${quote(field)} END` : `t.${quote(field)}` });
+      const completeness = columns.has(entry.completenessField) ? entry.completenessField : 'dependency_complete';
+      catalog.set(entry.metric, { ...entry, ...source, expression: field === 'count' ? '1' : entry.nullable ? `CASE WHEN t.${quote(completeness)}=1 THEN t.${quote(field)} END` : `t.${quote(field)}` });
     }
   }
   return { catalog, prefix, base, changes, params };

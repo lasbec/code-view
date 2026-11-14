@@ -6,7 +6,7 @@ const hash = text => createHash('sha256').update(text).digest('hex');
 
 export function fingerprints(project, onFile = () => {}) {
   // Include implementation changes as well as configuration in the cache contract.
-  const engine = ['project','metrics','analyze','incremental','database','termination','main','dependencies','graph'].map(n => readFileSync(new URL(`./${n}.mjs`, import.meta.url), 'utf8')).join('\n');
+  const engine = ['project','metrics','analyze','incremental','database','termination','main','dependencies','graph','callbacks','argument-usage'].map(n => readFileSync(new URL(`./${n}.mjs`, import.meta.url), 'utf8')).join('\n');
   const common = hash(engine + ts.version + project.configs.map(p => readFileSync(p, 'utf8')).join('\n'));
   const output = new Map(), contexts = new Map();
   const selection = JSON.stringify(project.files.map(f => f.path));

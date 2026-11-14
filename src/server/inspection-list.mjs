@@ -21,8 +21,9 @@ export function inspectionList(path, model) {
       is_generator: fn.is_generator ?? null, is_exported: fn.is_exported ?? null,
       score: nodes.get(fn.id)?.heat ?? null, total_lines: fn.total_lines,
       call_depth: fn.call_depth ?? null, reachable_internal_count: fn.reachable_internal_count ?? null,
+      down_call_depth: fn.down_call_depth ?? null,
       reachable_external_count: fn.reachable_external_count ?? null, reachable_symbol_count: fn.reachable_symbol_count ?? null,
-      direct_external_count: fn.direct_external_count ?? null, dependency_complete: fn.dependency_complete ?? null,
+      direct_external_count: fn.direct_external_count ?? null, dependency_complete: fn.dependency_complete ?? null, call_graph_complete: fn.call_graph_complete ?? fn.dependency_complete ?? null, direct_external_complete: fn.direct_external_complete ?? fn.dependency_complete ?? null,
       complexity: fn.cyclomatic_complexity,
       definite: mutations.get(fn.id)?.definite ?? 0, possible: mutations.get(fn.id)?.possible ?? 0,
     }));
