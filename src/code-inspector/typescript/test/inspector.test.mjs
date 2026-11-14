@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -165,9 +165,9 @@ test('shared databases retain legacy and unrelated objects and accept another pr
  assert.equal(reopened.prepare('SELECT name FROM code_functions').get().name,'b');
  assert.equal(reopened.prepare("SELECT value FROM code_metadata WHERE key='tsconfig'").get().value,path.join(second.dir,'tsconfig.json'));
  const objects=reopened.prepare("SELECT type,name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name NOT IN ('files','legacy_index','legacy_view','code_custom')").all();
- assert.equal(objects.filter(o=>o.type==='table').length,13);
+ assert.equal(objects.filter(o=>o.type==='table').length,16);
  assert.equal(objects.filter(o=>o.type==='view').length,3);
- assert.equal(objects.filter(o=>o.type==='index').length,4);
+ assert.equal(objects.filter(o=>o.type==='index').length,5);
  assert.ok(objects.every(o=>o.name.startsWith('code_')));
  assert.equal(reopened.prepare('SELECT function_count FROM code_file_function_counts').get().function_count,1);
  assert.deepEqual(reopened.prepare('SELECT * FROM code_access_counts').all(),[]);
@@ -207,7 +207,7 @@ test('stores actual UTF-8 file size in bytes, including BOM and CRLF', t => {
  assert.equal(result.files[0].size_bytes,Buffer.byteLength(text));
  const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
  assert.equal(db.prepare('SELECT size_bytes FROM code_files').get().size_bytes,readFileSync(path.join(dir,'size.ts')).length);
- assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'7');
+ assert.equal(db.prepare("SELECT value FROM code_metadata WHERE key='schema_version'").get().value,'8');
 });
 
 test('iteration targets and destructuring defaults are writes; branch aliases retain possible origins', t => {
@@ -285,4 +285,51 @@ test('function traits track class property modifiers without leaking into callba
  assert.equal(get('Example.plain').visibility,'public');assert.equal(get('Example.value').visibility,'public');
  assert.equal(get('method').visibility,'not_applicable');assert.equal(get('method').is_exported,0);
  assert.ok(!functions.some(f=>f.name.includes('noBody')));
+});
+
+test('dependency metrics persist cycles, canonical external references, aliases and analysis gaps', t => {
+ const {dir,args}=fixture(t,{'a.ts':`import { hidden } from './b.js';
+export function A() { console.log(Math.PI); }
+export function B() { A(); C(); }
+export function C() { B(); }
+export function R() { R(); }
+export function gap() { hidden(); }
+export function dynamic(f:()=>void) { f(); }
+export function pass() { console.log(A); }
+export function builtinValue() { return undefined; }
+`, 'b.ts':'export function hidden() {}'});
+ const r=main([...args,'--exclude','b.ts']), byName=new Map(r.functions.map(f=>[f.name,f]));
+ assert.equal(byName.get('B').call_depth,1);
+ assert.equal(byName.get('C').call_depth,2);
+ assert.equal(byName.get('R').reachable_internal_count,1);
+ assert.equal(byName.get('B').reachable_external_count,2);
+ assert.equal(byName.get('B').reachable_symbol_count,5);
+ assert.equal(byName.get('pass').reachable_internal_count,0);
+ assert.equal(byName.get('gap').dependency_complete,0);
+ assert.equal(byName.get('dynamic').dependency_complete,0);
+ assert.equal(byName.get('A').dependency_complete,1);
+ const db=new DatabaseSync(path.join(dir,'out.sqlite'));t.after(()=>db.close());
+ assert.equal(db.prepare('SELECT call_depth FROM code_functions WHERE name=?').get('C').call_depth,2);
+ assert.deepEqual(db.prepare('SELECT DISTINCT name FROM code_external_references ORDER BY name').all().map(r=>r.name),['builtin.Console.log','builtin.Math.PI','builtin.undefined']);
+ assert.equal(byName.get('builtinValue').direct_external_count,1);
+ assert.ok(db.prepare('SELECT * FROM code_unknown_references WHERE reason=?').get('excluded_internal'));
+});
+
+test('package aliases share identity, unused imports are absent, and namespace submodules remain distinct', t => {
+ const {dir,args}=fixture(t,{'a.ts':`import { run as execute, unused } from 'pkg';
+import * as ns from 'pkg';
+import { run as second } from 'pkg/sub';
+const alias = execute;
+export function use() { execute(); ns.run(); alias(); second(); }
+`});
+ mkdirSync(path.join(dir,'node_modules/pkg'),{recursive:true});
+ writeFileSync(path.join(dir,'node_modules/pkg/index.d.ts'),'export declare function run():void; export declare function unused():void;');
+ writeFileSync(path.join(dir,'node_modules/pkg/sub.d.ts'),'export declare function run():void;');
+ const r=main(args),f=r.functions.find(f=>f.name==='use');
+ assert.equal(f.dependency_complete,1);
+ assert.equal(f.call_depth,0);
+ assert.equal(f.direct_external_count,2);
+ assert.ok(r.externalReferences.some(r=>r.alias==='execute'));
+ assert.ok(!r.externalReferences.some(r=>r.name.includes('unused')));
+ assert.deepEqual([...new Set(r.externalReferences.map(r=>r.name))].sort(),['pkg.run','pkg/sub.run']);
 });

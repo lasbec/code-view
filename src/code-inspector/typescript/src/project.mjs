@@ -1,10 +1,13 @@
 import ts from 'typescript';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { minimatch } from 'minimatch';
 
 export const slash = p => p.split(path.sep).join('/');
-export function loadProject(configPath, includes = [], excludes = []) {
+export function loadProject(configPath, includes = [], excludes = [], repository = null) {
   configPath = path.resolve(configPath);
+  if (!repository) { try { repository = execFileSync('git', ['-C', path.dirname(configPath), 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { repository = path.dirname(configPath); } }
+  repository = path.resolve(repository);
   const base = path.dirname(configPath), seen = new Set(), files = new Map(), diagnostics = [];
   function load(config) {
     if (seen.has(config)) return;
@@ -32,6 +35,8 @@ export function loadProject(configPath, includes = [], excludes = []) {
     });
     for (const name of parsed.fileNames) {
       const sf = program.getSourceFile(name), relative = slash(path.relative(base, name));
+      const repositoryRelative = path.relative(repository, path.resolve(name));
+      if (repositoryRelative === '..' || repositoryRelative.startsWith(`..${path.sep}`) || path.isAbsolute(repositoryRelative)) continue;
       if (!sf || sf.isDeclarationFile || /(^|\/)node_modules\//.test(relative)) continue;
       if (includes.length && !includes.some(g => minimatch(relative, g, { dot: true }))) continue;
       if (excludes.some(g => minimatch(relative, g, { dot: true }))) continue;
@@ -40,5 +45,5 @@ export function loadProject(configPath, includes = [], excludes = []) {
     for (const ref of parsed.projectReferences ?? []) load(ts.resolveProjectReferencePath(ref));
   }
   load(configPath);
-  return { configPath, base, files: [...files.values()].sort((a,b) => a.path.localeCompare(b.path)), diagnostics, includes, excludes, configs: [...seen] };
+  return { configPath, base, repository, files: [...files.values()].sort((a,b) => a.path.localeCompare(b.path)), diagnostics, includes, excludes, configs: [...seen] };
 }

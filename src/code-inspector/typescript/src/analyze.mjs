@@ -12,7 +12,7 @@ const unwrap = n => { while (n && (ts.isParenthesizedExpression(n) || ts.isAsExp
 const mutators = new Set(['push','pop','shift','unshift','splice','sort','reverse','fill','copyWithin','set','add','delete','clear']);
 
 export function analyze(project, changedPaths = new Set(project.files.map(f => f.path)), cached = { functions: [], calls: [] }, onFile = () => {}, onIndexed = () => {}, onAnalysis = () => {}) {
-  const result = { files: [], functions: [], parameters: [], accesses: [], calls: [], references: [], symbolReferences: [], imports: [], exports: [], shadows: [], diagnostics: project.diagnostics };
+  const result = { files: [], functions: [], parameters: [], accesses: [], calls: [], references: [], symbolReferences: [], externalReferences: [], unknownReferences: [], imports: [], exports: [], shadows: [], diagnostics: project.diagnostics };
   const byNode = new Map(), byId = new Map();
   const nodeId = n => `${slash(path.relative(project.base, n.getSourceFile().fileName))}:${n.getStart()}`;
   function symbol(checker, n) {
@@ -178,21 +178,69 @@ export function analyze(project, changedPaths = new Set(project.files.map(f => f
     function runtimeName(n) {
       if (!ts.isIdentifier(n)) return false;
       const p = n.parent;
+      if ((ts.isLabeledStatement(p) || ts.isBreakStatement(p) || ts.isContinueStatement(p)) && p.label === n) return false;
       if (ts.isDeclarationName(n) && !(ts.isShorthandPropertyAssignment(p))) return false;
       if ((ts.isPropertyAccessExpression(p) && p.name === n) || ts.isQualifiedName(p) || ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isImportEqualsDeclaration(p) || ts.isExportSpecifier(p)) return false;
       if ((ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p)) && p.name === n) return false;
       return true;
     }
+    const externalCache = new WeakMap();
+    function external(n) {
+      if (externalCache.has(n)) return externalCache.get(n);
+      externalCache.set(n, null);
+      const value = resolveExternal(n);
+      externalCache.set(n, value);
+      return value;
+    }
+    function resolveExternal(n) {
+      const key = ts.isPropertyAccessExpression(n) ? n.name : ts.isElementAccessExpression(n) ? n.argumentExpression : n;
+      const sym = (ts.isShorthandPropertyAssignment(n.parent) ? checker.getShorthandAssignmentValueSymbol(n.parent) : symbol(checker, key)) ?? (ts.isElementAccessExpression(n) && ts.isStringLiteralLike(n.argumentExpression) ? checker.getPropertyOfType(checker.getTypeAtLocation(n.expression), n.argumentExpression.text) : null);
+      const declaration = sym?.valueDeclaration ?? sym?.declarations?.[0];
+      if (!declaration) return sym?.getName() === 'undefined' ? { symbol_id: 'builtin.undefined', name: 'builtin.undefined', origin: 'builtin', symbol_kind: 'value' } : null;
+      const source = declaration.getSourceFile(), filename = slash(path.resolve(source.fileName));
+      const relative = path.relative(project.repository ?? project.base, source.fileName);
+      const packageMatch = filename.match(/\/node_modules\/((?:@[^/]+\/)?[^/]+)\//);
+      const builtin = /\/typescript\/lib\/lib\.[^/]+\.d\.ts$/.test(filename);
+      const outside = relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+      if (!packageMatch && !builtin && !outside) {
+        if (ts.isVariableDeclaration(declaration) && declaration.parent.flags & ts.NodeFlags.Const && declaration.initializer) return external(unwrap(declaration.initializer));
+        return null;
+      }
+      const origin = builtin ? 'builtin' : packageMatch ? packageMatch[1] : slash(path.dirname(source.fileName));
+      const qualified = checker.getFullyQualifiedName(sym);
+      const module = qualified.match(/^"([^"\n]+)"\.(.*)$/);
+      let name = `${origin}.${qualified}`;
+      if (module) {
+        const modulePath = slash(module[1]);
+        const packagePath = modulePath.match(/\/node_modules\/((?:@[^/]+\/)?[^/]+)(.*)$/);
+        const moduleName = packagePath ? packagePath[1] + packagePath[2].replace(/(?:\.d)?\.[cm]?[jt]s$/, '').replace(/\/index$/, '') : modulePath;
+        name = `${moduleName}.${module[2]}`;
+      }
+      return { symbol_id: name, name, origin, symbol_kind: checker.getTypeOfSymbolAtLocation(sym, n).getCallSignatures().length ? 'function' : 'value' };
+    }
+    function recordExternal(n, owner) {
+      const ext = external(n);
+      if (ext) result.externalReferences.push({ ...ext, file_id: filePath, function_id: owner?.id ?? null, alias: n.getText(sf), kind: referenceKind(n), ...location(n) });
+      return ext;
+    }
     function scan(n, owner = null) {
       if (isFunction(n)) owner = byNode.get(n);
-      if (ts.isTypeNode(n)) return;
+      if (ts.isTypeNode(n) || ts.isImportDeclaration(n) || ts.isImportEqualsDeclaration(n)) return;
       if (ts.isCallExpression(n) || ts.isNewExpression(n)) {
         let candidates = targets(checker, n.expression);
         const signature = checker.getResolvedSignature(n), decl = signature?.declaration;
         if (decl && isFunction(decl) && !candidates.length) candidates = [decl];
         const target = candidates.length === 1 ? nodeId(candidates[0]) : null;
-        result.calls.push({ caller_id: owner?.id ?? null, file_id: filePath, target_id: target && byId.has(target) ? target : null, target_name: n.expression.getText(sf), resolution: target && byId.has(target) ? 'resolved' : candidates.length > 1 ? 'ambiguous' : 'unknown', kind: ts.isNewExpression(n) ? 'construct' : 'call', ...location(n) });
+        result.calls.push({ caller_id: owner?.id ?? null, file_id: filePath, target_id: target && byId.has(target) ? target : null, target_name: n.expression.getText(sf), resolution: target && byId.has(target) ? 'resolved' : external(n.expression) ? 'external' : candidates.length > 1 ? 'ambiguous' : 'unknown', kind: ts.isNewExpression(n) ? 'construct' : 'call', ...location(n) });
+        if ((!target || !byId.has(target)) && !external(n.expression)) result.unknownReferences.push({ file_id: filePath, function_id: owner?.id ?? null, expression: n.expression.getText(sf), reason: target ? 'excluded_internal' : 'unresolved_call', ...location(n) });
         if (owner && (!target || !byId.has(target))) owner.unsafe = true;
+      }
+      if ((runtimeName(n) || ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) && !ts.isImportDeclaration(n.parent)) {
+        // Namespace roots are not separate symbols; property reads remain references.
+        if (!ts.isIdentifier(n) || !(ts.isPropertyAccessExpression(n.parent) || ts.isElementAccessExpression(n.parent)) || n.parent.expression !== n) {
+          const ext = recordExternal(n, owner);
+          if (!ext && !symbol(checker, ts.isPropertyAccessExpression(n) ? n.name : n) && !ts.isExportSpecifier(n.parent)) result.unknownReferences.push({ file_id: filePath, function_id: owner?.id ?? null, expression: n.getText(sf), reason: 'unresolved_reference', ...location(n) });
+        }
       }
       if (runtimeName(n) || ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n) || ts.isExportSpecifier(n)) {
         const candidates = targets(checker, ts.isExportSpecifier(n) ? (n.propertyName ?? n.name) : n);

@@ -98,7 +98,7 @@ function sources(db, options) {
         continue;
       }
       if (table !== source.table || field !== 'count' && !columns.has(field)) continue;
-      catalog.set(entry.metric, { ...entry, ...source, expression: field === 'count' ? '1' : `t.${quote(field)}` });
+      catalog.set(entry.metric, { ...entry, ...source, expression: field === 'count' ? '1' : entry.nullable ? `CASE WHEN t.dependency_complete=1 THEN t.${quote(field)} END` : `t.${quote(field)}` });
     }
   }
   return { catalog, prefix, base, changes, params };
@@ -219,14 +219,14 @@ export async function calculateTreeMap(bytes, config, options = {}) {
         byFile.get(file.id).push(row.value);
       }
       for (const file of files) file.metrics[metric] = aggregate(byFile.get(file.id) ?? [], source.aggregation);
-      if (missing.size) diagnostics.push({ severity: 'warning', code: 'missing-values', message: `${metric}: fehlende Messwerte in ${missing.size} Datei(en) als 0 gewertet.`, paths: [...missing] });
+      if (missing.size) diagnostics.push({ severity: 'warning', code: 'missing-values', message: `${metric}: fehlende Messwerte in ${missing.size} Datei(en); unvollständige Abhängigkeitsmetriken werden vom Score ausgeschlossen.`, paths: [...missing] });
     }
     const omitted = [];
     let observedMax = 0;
     const visible = [];
     for (const file of files) {
       file.area = file.metrics[selected.area];
-      file.scores = selected.scores.map((score, groupIndex) => ({ ...scoreMeasurements(score, metric => measurements.get(metric).get(file.id) ?? []), groupIndex }));
+      file.scores = selected.scores.map((score, groupIndex) => ({ ...scoreMeasurements(score, metric => measurements.get(metric).get(file.id) ?? [], metric => !catalog.get(metric).nullable || !!measurements.get(metric).get(file.id)?.length), groupIndex })).filter(s => s.contributions.length);
       if (file.area <= 0 && !options.includeZeroArea) omitted.push(file.path);
       else visible.push(file);
     }

@@ -14,8 +14,13 @@ CREATE TABLE code_functions (
  name TEXT, signature TEXT, kind TEXT, visibility TEXT, is_static INTEGER, is_async INTEGER, is_generator INTEGER, is_exported INTEGER, line INTEGER, column INTEGER, end_line INTEGER,
  total_lines INTEGER, blank_lines INTEGER, comment_lines INTEGER, lines_with_comments INTEGER, effective_lines INTEGER,
  max_nesting INTEGER, cyclomatic_complexity INTEGER, cognitive_complexity INTEGER,
+ call_depth INTEGER, reachable_internal_count INTEGER, reachable_external_count INTEGER, reachable_symbol_count INTEGER, direct_external_count INTEGER, dependency_complete INTEGER, dependency_group_id TEXT,
  termination TEXT CHECK(termination IN ('terminates','unknown')), termination_reason TEXT, termination_candidate INTEGER, shadowing_count INTEGER
 );
+CREATE TABLE code_external_references (id INTEGER PRIMARY KEY, symbol_id TEXT, name TEXT, origin TEXT, symbol_kind TEXT, file_id TEXT REFERENCES code_files(id), function_id TEXT REFERENCES code_functions(id), alias TEXT, kind TEXT, line INTEGER, column INTEGER);
+CREATE INDEX code_external_function ON code_external_references(function_id);
+CREATE TABLE code_unknown_references (id INTEGER PRIMARY KEY, file_id TEXT REFERENCES code_files(id), function_id TEXT REFERENCES code_functions(id), expression TEXT, reason TEXT, line INTEGER, column INTEGER);
+CREATE TABLE code_dependency_groups (id TEXT PRIMARY KEY, reachable_functions TEXT, external_symbols TEXT, complete INTEGER);
 CREATE TABLE code_imports (id INTEGER PRIMARY KEY, file_id TEXT REFERENCES code_files(id), target_file_id TEXT, specifier TEXT, kind TEXT, line INTEGER, column INTEGER);
 CREATE TABLE code_symbol_references (id INTEGER PRIMARY KEY, file_id TEXT REFERENCES code_files(id), function_id TEXT REFERENCES code_functions(id), target_file_id TEXT, target_name TEXT, kind TEXT, line INTEGER, column INTEGER);
 CREATE TABLE code_exports (file_id TEXT REFERENCES code_files(id), name TEXT);
@@ -62,9 +67,9 @@ export function openDatabase(output, project) {
     db.exec('BEGIN IMMEDIATE');
     for (const view of ['code_call_counts', 'code_access_counts', 'code_file_function_counts']) db.exec(`DROP VIEW IF EXISTS ${view}`);
     for (const index of ['code_calls_caller', 'code_calls_target', 'code_accesses_function', 'code_references_target']) db.exec(`DROP INDEX IF EXISTS ${index}`);
-    for (const table of ['code_symbol_references', 'code_imports', 'code_exports', 'code_accesses', 'code_shadowing', 'code_parameters', 'code_calls', 'code_function_references', 'code_file_state', 'code_functions', 'code_files', 'code_diagnostics', 'code_metadata']) db.exec(`DROP TABLE IF EXISTS ${table}`);
+    for (const table of ['code_external_references', 'code_unknown_references', 'code_dependency_groups', 'code_symbol_references', 'code_imports', 'code_exports', 'code_accesses', 'code_shadowing', 'code_parameters', 'code_calls', 'code_function_references', 'code_file_state', 'code_functions', 'code_files', 'code_diagnostics', 'code_metadata']) db.exec(`DROP TABLE IF EXISTS ${table}`);
     db.exec(schema);
-    db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('schema_version', '7');
+    db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('schema_version', '8');
     db.prepare('INSERT INTO code_metadata VALUES (?,?)').run('tsconfig', project.configPath);
     return db;
   } catch (error) { db.close(); throw error; }
@@ -86,6 +91,8 @@ export function writeFileResult(db, result, file, fingerprint) {
   insert(db, 'code_imports', result.imports.filter(row => row.file_id === file.id));
   insert(db, 'code_exports', result.exports.filter(row => row.file_id === file.id));
   insert(db, 'code_functions', result.functions.filter(f => ids.has(f.id)).map(({ unsafe, ...f }) => ({ ...f, shadowing_count: result.shadows.filter(s => s.function_id === f.id).length })));
+  insert(db, 'code_external_references', result.externalReferences.filter(row => row.file_id === file.id));
+  insert(db, 'code_unknown_references', result.unknownReferences.filter(row => row.file_id === file.id));
   insert(db, 'code_symbol_references', result.symbolReferences.filter(row => row.file_id === file.id));
   insert(db, 'code_parameters', result.parameters.filter(p => ids.has(p.function_id)));
   insert(db, 'code_accesses', result.accesses.filter(a => ids.has(a.function_id)));
@@ -97,5 +104,5 @@ export function writeFileResult(db, result, file, fingerprint) {
 export function writeMetadata(db, project) {
   insert(db, 'code_diagnostics', project.diagnostics);
   const statement = db.prepare('INSERT OR REPLACE INTO code_metadata VALUES (?,?)');
-  for (const [key, value] of Object.entries({ analyzer_version: '1.0.0', typescript_version: '5.9.3', updated_at: new Date().toISOString(), includes: JSON.stringify(project.includes), excludes: JSON.stringify(project.excludes), configs: JSON.stringify(project.configs), termination_model: 'Conservative structural model; see README.' })) statement.run(key, value);
+  for (const [key, value] of Object.entries({ analyzer_version: '1.0.0', typescript_version: '5.9.3', updated_at: new Date().toISOString(), repository: project.repository, includes: JSON.stringify(project.includes), excludes: JSON.stringify(project.excludes), configs: JSON.stringify(project.configs), termination_model: 'Conservative structural model; see README.' })) statement.run(key, value);
 }

@@ -71,7 +71,7 @@ export class Jobs {
       this.current.phase = 'Inspecting TypeScript';
       this.current.activeInspector = 'code';
       this.current.progress.code.status = 'preparing';
-      await this.command(process.execPath, [resolve(source, 'code-inspector/typescript/src/main.mjs'), '--progress', '--tsconfig', tsconfig, '--output', staging, ...config.include.flatMap(p => ['--include', p]), ...config.exclude.flatMap(p => ['--exclude', p])], false, 'code');
+      await this.command(process.execPath, [resolve(source, 'code-inspector/typescript/src/main.mjs'), '--progress', '--repository', repository, '--tsconfig', tsconfig, '--output', staging, ...config.include.flatMap(p => ['--include', p]), ...config.exclude.flatMap(p => ['--exclude', p])], false, 'code');
       this.current.progress.code.status = 'done';
       this.current.phase = 'Inspecting Git history';
       this.current.activeInspector = 'git';

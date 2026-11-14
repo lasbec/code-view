@@ -52,6 +52,17 @@ add('git_file_changes', 'churn', 'Code churn', 'Added plus deleted lines across 
 add('git_commits', 'is_merge', 'Merge integrations', 'Merge commits changing this path against the first parent; not proof of editing or conflict resolution.');
 count('git_merge_conflict_files', 'Reconstructed conflicting merges', 'Reconstructed merges reporting unresolved stages for this path; not proof of historical conflicts.');
 count('git_merge_conflicts', 'Reconstructed conflict messages', 'Structured conflict messages associated with this path; several can occur in one merge.');
+
+for (const [field, label, description] of [
+  ['call_depth', 'Internal call depth', 'Longest internal call path without repeating a function. Cycles contribute their length; exact search has a state budget.'],
+  ['reachable_internal_count', 'Reachable internal functions', 'Distinct reachable functions, including the starting function only if reached again.'],
+  ['reachable_external_count', 'Reachable external symbols', 'Distinct external runtime functions and values referenced directly or by reachable internal functions.'],
+  ['reachable_symbol_count', 'Reachable symbols total', 'Reachable internal functions plus external symbols.'],
+  ['direct_external_count', 'Direct external symbols', 'Distinct external runtime symbols referenced in this function body.'],
+]) {
+  add('code_functions', field, label, `${description} Incomplete measurements are excluded from scores.`, { nullable: true });
+}
+
 export const metricCatalog = entries;
 export const metricById = new Map(entries.map(entry => [entry.metric, entry]));
 

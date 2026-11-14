@@ -55,7 +55,17 @@ export async function inspectDetail(path, config, id, kind, model, expanded) {
     if (!tables.has('code_imports')) warnings.push('Run inspection again to collect exact imports and exports.');
     const historyPath = relative(config.repository, resolve(dirname(metadata.tsconfig || resolve(config.repository, config.tsconfig)), fileId)).split(sep).join('/');
     const history = query('git_file_changes', `SELECT ch.path,c.committed_at,c.author_name,c.author_email,c.hash FROM git_file_changes ch JOIN git_commits c ON c.repository_id=ch.repository_id AND c.hash=ch.commit_hash WHERE ch.path=? AND c.is_merge=0 ORDER BY c.committed_at DESC`, historyPath);
-    return { kind, entity, file, fileIds: files.map(f => f.id), node, preset: config.preset.name, warnings, source, sourcePath,
+    const externalReferences = query('code_external_references', 'SELECT * FROM code_external_references');
+    const groups = query('code_dependency_groups', 'SELECT * FROM code_dependency_groups');
+    const relevant = groups.filter(g => kind === 'function' ? g.id === entity.dependency_group_id : functions.some(f => owned.has(f.id) && f.dependency_group_id === g.id));
+    const reachableFunctions = [...new Set(relevant.flatMap(g => JSON.parse(g.reachable_functions)))];
+    const reachableSymbols = new Set(relevant.flatMap(g => JSON.parse(g.external_symbols)));
+    if (entity.dependency_complete === 0) warnings.push('Dependency analysis is incomplete. Counts and known paths are lower bounds and are excluded from scores.');
+    if (kind === 'function' && entity.dependency_complete != null && entity.call_depth == null) warnings.push('Exact depth is undetermined: the search budget was exceeded or a downstream depth is unavailable.');
+    return { kind, entity, reachableFunctions,
+      directExternalReferences: externalReferences.filter(r => kind === 'function' ? r.function_id === id : r.file_id === fileId),
+      reachableExternalReferences: externalReferences.filter(r => reachableSymbols.has(r.symbol_id) && (reachableFunctions.includes(r.function_id) || (kind === 'function' ? r.function_id === id : owned.has(r.function_id)))),
+      unknownReferences: query('code_unknown_references', 'SELECT * FROM code_unknown_references').filter(r => kind === 'function' ? r.function_id === id || reachableFunctions.includes(r.function_id) : r.file_id === fileId || reachableFunctions.includes(r.function_id)), file, fileIds: files.map(f => f.id), node, preset: config.preset.name, warnings, source, sourcePath,
       functions: functions.filter(fn => fn.file_id === fileId).map(fn => ({ ...fn, heat: nodes.get(fn.id)?.heat ?? null })),
       names: functions.map(({ id, name, file_id, line }) => ({ id, name, file_id, line })),
       parent: functions.find(fn => fn.id === entity.parent_function_id),

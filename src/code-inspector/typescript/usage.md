@@ -7,6 +7,7 @@ See the root [README](../../../README.md) for requirements and installation.
 | Parameter | Required | Meaning |
 | --- | --- | --- |
 | `--tsconfig`, `-p` | yes | Path to the main tsconfig. |
+| `--repository` | no | Repository root for internal/external classification; defaults to Git root, then tsconfig directory. |
 | `--output`, `-o` | yes | Path to a new or existing SQLite file. |
 | `--include` | no | Repeatable glob restricting the tsconfig file set. |
 | `--exclude` | no | Repeatable glob removing files from the selection. |
@@ -64,3 +65,10 @@ not elapsed time. Intermediate updates are limited to approximately ten per
 second; initial counts and finalization are always emitted. Finalization can
 continue after the counter reaches its total. A successful process exit confirms
 completion. The local server consumes these events separately from diagnostic logs.
+
+## Dependency metrics and external symbols
+
+Rerun inspection to populate internal call depth and direct/transitive dependency counts.
+Cycles contribute to depth until a function would repeat. Reachable sets include the starting function when a call path returns to it. External functions and values count once; their implementations are not followed. Passing a function as an argument alone does not create an internal call edge.
+
+All five dependency metrics are selectable for scores. Unresolved dependencies produce lower bounds, excluded from scoring; an exhausted exact-depth budget produces an undetermined depth. The function list supports sorting by all five metrics, and includes a searchable repository-wide external-symbol catalogue with aliases and source locations. Function details show reachable functions, external references and unresolved dependencies.

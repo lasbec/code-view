@@ -528,3 +528,25 @@ test('list scoring can include zero-area files without changing ordinary treemap
   assert.ok(all.files.some(file=>file.id==='empty.ts' && file.area===0));
   assert.equal((await calculateTreeMap(bytes,config,{includeZeroArea:'yes'})).ok,false);
 });
+
+test('dependency metrics omit incomplete and budget-exhausted values from scores while retaining measured zero', async t => {
+ const {input}=functionFixture(t), db=new DatabaseSync(input);
+ db.exec(`ALTER TABLE code_functions ADD COLUMN call_depth INTEGER;
+ ALTER TABLE code_functions ADD COLUMN dependency_complete INTEGER;
+ UPDATE code_functions SET call_depth=10,dependency_complete=0;
+ UPDATE code_functions SET call_depth=0,dependency_complete=1 WHERE id='f1';
+ UPDATE code_functions SET call_depth=NULL,dependency_complete=1 WHERE id='f3';`);
+ db.close();
+ const bytes=readFileSync(input), metric='code_functions.call_depth';
+ assert.ok((await listMetrics(bytes)).some(m=>m.metric===metric));
+ const result=await calculateTreeMap(bytes,{scores:[{normalize:false,metrics:[{metric}]}]});
+ assert.equal(result.ok,true,JSON.stringify(result.diagnostics));
+ assert.equal(result.files.find(f=>f.id==='src/a.ts').heat,0);
+ assert.equal(result.files.find(f=>f.id==='src/b.ts').heat,null);
+ const detailed=await calculateTreeMap(bytes,{scores:[{normalize:false,metrics:[{metric}]}]},{showFunctions:true});
+ assert.equal(detailed.ok,true,JSON.stringify(detailed.diagnostics));
+ const children=detailed.files.flatMap(f=>f.children ?? []);
+ assert.equal(children.find(f=>f.id==='f1').heat,0);
+ assert.equal(children.find(f=>f.id==='f2').heat,null);
+ assert.equal(children.find(f=>f.id==='f3').heat,null);
+});

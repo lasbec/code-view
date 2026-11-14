@@ -1,6 +1,6 @@
 # Code inspection result schema
 
-SQLite, schema version `7`. See [TypeScript usage](typescript/usage.md).
+SQLite, schema version `8`. See [TypeScript usage](typescript/usage.md).
 
 ## Conventions
 
@@ -182,7 +182,7 @@ Fingerprints are recalculated each run; previous analysis results are not reused
 
 | Key | Value |
 | --- | --- |
-| `schema_version` | `7`. |
+| `schema_version` | `8`. |
 | `analyzer_version` | `1.0.0`. |
 | `typescript_version` | `5.9.3`. |
 | `tsconfig` | Absolute path to the main tsconfig. |
@@ -242,3 +242,25 @@ private. Async means the syntactic modifier, not simply a Promise return type.
 Exported means exported by the defining module, including aliases and default
 exports; methods of exported classes are not themselves module exports.
 Only function implementations with bodies are included, as before.
+
+## Function dependencies (schema version 8)
+
+`code_functions` adds these numeric score metrics:
+
+| Column | Meaning |
+| --- | --- |
+| `call_depth` | Longest internal call path in edges without repeating a function. `NULL` when exact search exceeds its budget or depends on an unavailable depth. |
+| `reachable_internal_count` | Distinct reachable functions; includes the starting function only when reached through a cycle. |
+| `reachable_external_count` | Distinct external runtime functions and values referenced directly or by reachable internal functions. |
+| `reachable_symbol_count` | Internal and external reachable counts combined. |
+| `direct_external_count` | Distinct external symbols referenced directly in the function body, excluding nested function bodies. |
+| `dependency_complete` | `0` indicates unresolved dependencies in the reachable graph. Counts and known depths are lower bounds and excluded from scores. |
+| `dependency_group_id` | Shared SCC summary in `code_dependency_groups`. |
+
+`code_dependency_groups(id TEXT PK, reachable_functions TEXT, external_symbols TEXT, complete INTEGER)` stores sorted JSON arrays of function IDs and external symbol IDs once per strongly connected component. Reachability stops at external symbols. Exact depths use memoized visited-set states inside each SCC, with a budget of 100,000 states per component and 512 nested search steps; downstream SCC results are reused.
+
+`code_external_references` stores occurrence rows: `id INTEGER PK`, `symbol_id`, `name`, `origin`, `symbol_kind` (`function` or `value`), `file_id`, nullable `function_id`, `alias` (source expression), usage `kind`, `line`, `column`. Original compiler symbols are deduplicated by qualified module/name identity. Package submodules remain distinct. Unused imports and type-only references are excluded. Built-ins have origin `builtin`; package declarations have the package name as origin.
+
+`code_unknown_references(id INTEGER PK, file_id TEXT, function_id TEXT, expression TEXT, reason TEXT, line INTEGER, column INTEGER)` records unresolved runtime uses, including excluded internal calls. Unknown does not imply external. `code_calls.resolution` additionally supports `external`.
+
+Metadata `repository` records the repository boundary: explicit `--repository`, otherwise the Git root, falling back to the tsconfig directory. Installed packages are external even within that directory. Source filters do not redefine this boundary.

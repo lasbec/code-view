@@ -30,7 +30,7 @@ export function attachFunctions(db, files, selected, catalog, query) {
     const node = { ...fn, kind: 'function', functionKind: fn.kind, path: `${file.path}:${fn.line}:${fn.column}`, sizeMetric: catalog.get(selected.functionArea).label, metrics: {}, scores: [] };
     for (const metric of needed) node.metrics[metric] = aggregate(values.get(metric) ?? [], catalog.get(metric).aggregation);
     selected.scores.forEach((score, groupIndex) => {
-      const result = scoreMeasurements(score, metric => values.get(metric) ?? [], metric => functionMetrics.has(metric));
+      const result = scoreMeasurements(score, metric => values.get(metric) ?? [], metric => functionMetrics.has(metric) && (!catalog.get(metric).nullable || !!values.get(metric)?.length));
       if (result.contributions.length) node.scores.push({ ...result, groupIndex });
     });
     file.children.push(node);

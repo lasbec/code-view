@@ -25,9 +25,17 @@ test('list UI keeps searches independent, supports OR chips, sorting, pagination
   dom.window.eval(bundle.outputFiles[0].text);
   const doc=dom.window.document,host=doc.querySelector('#list');let calls=0,opened;
   const all=[...rows,...Array.from({length:101},(_,i)=>({...rows[2],id:`z${i}`,name:`extra${i}`}))];
-  const options={kind:'function',inspection:{id:'i'},preset:{id:'p'},api:async()=>{calls++;return {files:[],functions:all,traitsAvailable:true};},openDetail:href=>{opened=href;}};
+  const options={kind:'function',inspection:{id:'i'},preset:{id:'p'},api:async()=>{calls++;return {files:[],functions:all,traitsAvailable:true,externalSymbols:[{name:'builtin.Console.log',kind:'function',references:[{file_id:'a.ts',line:1,alias:'console.log',kind:'direct_call'}]}]};},openDetail:href=>{opened=href;}};
   await dom.window.Lists.mountInspectionList(host,options);
   assert.match(host.querySelector('[data-page-count]').textContent,/1 of 2/);
+  assert.equal(host.querySelectorAll('[data-sort="call_depth"]').length,1);
+  assert.equal(host.querySelectorAll('[data-sort="reachable_symbol_count"]').length,1);
+  assert.match(host.querySelector('[data-external-results]').textContent,/builtin.Console.log/);
+  const externalSearch=host.querySelector('[aria-label="Search external symbols"]');
+  externalSearch.value='missing';externalSearch.dispatchEvent(new dom.window.Event('input'));
+  assert.match(host.querySelector('[data-external-results]').textContent,/No external symbols found/);
+  externalSearch.value='';externalSearch.dispatchEvent(new dom.window.Event('input'));
+  assert.match(host.querySelector('[data-external-results] a').getAttribute('href'),/line=1/);
   host.querySelector('[data-page="1"]').click();assert.match(host.querySelector('[data-page-count]').textContent,/2 of 2/);
   const search=host.querySelector('[data-list-search]');search.value='load';search.dispatchEvent(new dom.window.Event('input'));
   assert.match(host.querySelector('[data-result-count]').textContent,/1 \/ 104/);
