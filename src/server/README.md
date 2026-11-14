@@ -185,8 +185,11 @@ selected scoring preset. Existing author identities combine email aliases.
 The right sidebar provides independent named developer presets (New, Duplicate,
 Delete, Save & apply). Defaults are proportional attribution, weighted average,
 no extra normalization, weighted line changes, no merges and created/deleted/changed
-weights of 1/1/1. Other aggregations are sum, maximum, weighted median and weighted
-quantile. File scores can be divided by effective code lines or scaled to 0–100
+weights of 1/1/1. Other aggregations are sum, maximum, weighted median and
+quantile of score contributions. The quantile uses normalized file score times
+author share, with equal weight per attributed file and linear interpolation
+(0 = minimum, 50 = median, 100 = maximum). Files with zero attribution or missing
+scores are excluded. File scores can be divided by effective code lines or scaled to 0–100
 using the largest score across the inspection; zero-code-line files have no
 per-line score. Winner attribution gives the whole file to its main author;
 proportional attribution uses that author's fraction of commits or weighted line

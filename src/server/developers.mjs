@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { normalizeAuthorEmail } from '../treemap/src/authors.mjs';
+import { aggregate } from '../treemap/src/scoring.mjs';
 
 export const defaultDeveloperPreset = () => ({ name: 'Developers', config: { aggregation: 'average', quantile: 90, normalization: 'none', attribution: 'proportional', basis: 'churn', merges: 'exclude', created: 1, deleted: 1, changed: 1 } });
 export function validateDeveloperPreset(value) {
@@ -20,12 +21,13 @@ export function authorColor(id) {
 export function aggregateDeveloper(values, config) {
   const entries = values.filter(v => v.weight > 0 && Number.isFinite(v.score));
   if (!entries.length) return null;
+  if (config.aggregation === 'quantile') return aggregate(entries.map(v => v.score*v.weight), 'quantile', config.quantile);
   const sum = entries.reduce((s,v) => s + v.score*v.weight, 0);
   if (config.aggregation === 'sum') return sum;
   if (config.aggregation === 'average') return sum / entries.reduce((s,v) => s+v.weight,0);
   if (config.aggregation === 'max') return entries.reduce((max,v) => Math.max(max,v.score), -Infinity);
   entries.sort((a,b) => a.score-b.score);
-  const target = entries.reduce((s,v) => s+v.weight,0) * (config.aggregation === 'median' ? .5 : config.quantile/100);
+  const target = entries.reduce((s,v) => s+v.weight,0) * .5;
   let cumulative = 0;
   for (const e of entries) { cumulative += e.weight; if (cumulative >= target) return e.score; }
   return entries.at(-1).score;

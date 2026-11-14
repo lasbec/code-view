@@ -14,8 +14,10 @@ test('developer sidebar saves weights, table searches and details show raw commi
   const settle=()=>new Promise(r=>setTimeout(r,15));
   await dom.window.Developers.mountDevelopers(host,{state,api,reload:async()=>{}});await settle();
   assert.ok(host.querySelector('.graph-sidebar form'));assert.match(host.textContent,/Alice <unsafe>/);assert.equal(host.querySelector('unsafe'),null);
+  assert.equal(host.querySelector('[name="aggregation"] option[value="quantile"]').textContent,'Quantile of score contributions');
+  host.querySelector('[name="aggregation"]').value='quantile';
   host.querySelector('[data-person]').click();assert.match(host.querySelector('[data-detail]').textContent,/abc123/);
   const search=host.querySelector('[data-search]');search.value='nobody';search.dispatchEvent(new dom.window.Event('input'));assert.equal(host.querySelectorAll('tbody tr').length,0);
   host.querySelector('[name="changed"]').value='3';host.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true,bubbles:true}));await settle();
-  const saved=calls.find(c=>c.method==='PUT');assert.equal(saved.path,'developerPresets/d');assert.equal(saved.value.config.changed,3);assert.equal(saved.value.config.aggregation,'average');
+  const saved=calls.find(c=>c.method==='PUT');assert.equal(saved.path,'developerPresets/d');assert.equal(saved.value.config.changed,3);assert.equal(saved.value.config.aggregation,'quantile');
 });

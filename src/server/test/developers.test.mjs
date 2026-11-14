@@ -11,9 +11,18 @@ test('weighted aggregation preserves shares rather than averaging attributed amo
   assert.equal(aggregateDeveloper(values,config),28);
   assert.equal(aggregateDeveloper(values,{...config,aggregation:'sum'}),28);
   assert.equal(aggregateDeveloper(values,{...config,aggregation:'median'}),20);
-  assert.equal(aggregateDeveloper(values,{...config,aggregation:'quantile',quantile:95}),100);
+  assert.equal(aggregateDeveloper(values,{...config,aggregation:'quantile',quantile:95}),17.6);
   assert.equal(aggregateDeveloper([{score:null,weight:1}],config),null);
   assert.throws(()=>validateDeveloperPreset({name:'bad',config:{...config,changed:-1}}));
+});
+test('quantiles interpolate score contributions with equal weight per attributed file',()=>{
+  const config={...defaultDeveloperPreset().config,aggregation:'quantile'};
+  const values=[{score:100,weight:.1},{score:20,weight:.9},{score:0,weight:1},{score:999,weight:0},{score:null,weight:1}];
+  for (const [quantile,expected] of [[0,0],[25,5],[50,10],[75,14],[100,18]]) {
+    assert.equal(aggregateDeveloper(values,{...config,quantile}),expected);
+  }
+  assert.equal(aggregateDeveloper([{score:100,weight:.1}],config),10);
+  assert.equal(aggregateDeveloper([{score:null,weight:1},{score:20,weight:0}],config),null);
 });
 test('attribution merges aliases, counts unique commits, keeps raw activity separate and honors scope',t=>{
   const dir=mkdtempSync(join(tmpdir(),'developers-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
@@ -31,10 +40,17 @@ test('attribution merges aliases, counts unique commits, keeps raw activity sepa
   assert.equal(alice.files[0].weight,2/3);assert.equal(result.mainAuthors['a.ts'].id,alice.id);
   assert.equal(result.authorship['a.ts'].authors[0].share,2/3);
   assert.equal(result.authorship['a.ts'].basis,'churn');
+  const contributions=developerData(path,files,{...preset,config:{...preset.config,aggregation:'quantile',quantile:50}},identities);
+  const contributionAlice=contributions.developers.find(p=>p.id===alice.id);
+  assert.equal(contributionAlice.score,contributionAlice.files.reduce((sum,f)=>sum+f.contribution,0)/2);
   const winner=developerData(path,files,{...preset,config:{...preset.config,attribution:'winner'}},identities);
   assert.equal(winner.developers.find(p=>p.id==='bob@example.com').score,null);
   const normalized=developerData(path,files,{...preset,config:{...preset.config,normalization:'lines'}},identities);
   assert.equal(normalized.developers.find(p=>p.id===alice.id).score,10);
+  const quantile=developerData(path,files,{...preset,config:{...preset.config,aggregation:'quantile',quantile:50,normalization:'lines'}},identities);
+  const quantileAlice=quantile.developers.find(p=>p.id===alice.id);
+  assert.equal(quantileAlice.score,quantileAlice.files[0].contribution);
+  assert.equal(quantileAlice.score,10*(2/3));
   assert.equal(developerData(path,files,preset,identities,{since:'2026-01-02'}).developers.length,1);
   assert.equal(developerData(path,files,{...preset,config:{...preset.config,merges:'only'}},identities).developers[0].name,'Merge');
 });
