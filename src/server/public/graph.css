@@ -1,3 +1,41 @@
 body.graph-page{height:100dvh;overflow:hidden}.graph-page main{display:flex;flex:1;min-height:0;padding:10px 12px}.graph-page #view{flex:1;min-width:0;min-height:0}.graph-workspace{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:12px;height:100%;min-height:0}.graph-main{display:flex;flex-direction:column;min-width:0;min-height:0}.graph-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.graph-tools h1{font-size:20px;margin:0 auto 0 0}.graph-tools button{padding:5px 10px}.graph-tools label{display:flex;align-items:center;gap:8px;margin:0}.graph-tools input{margin:0;padding:5px 8px;width:170px}.graph-main>.hint{margin:8px 0}.graph-canvas{flex:1;min-height:200px;border:1px solid var(--cv-border);border-radius:8px;background:var(--cv-subtle);overflow:hidden}.graph-canvas svg{display:block;width:100%;height:100%;touch-action:none;user-select:none}.graph-sidebar{overflow:auto;border-left:1px solid var(--cv-border);padding:8px 4px 16px 16px;background:var(--cv-surface)}.graph-sidebar label{margin-bottom:12px;font-size:12px}.graph-sidebar input,.graph-sidebar select,.graph-sidebar textarea{padding:7px 9px}.graph-sidebar textarea{min-height:60px}.graph-sidebar details{padding:10px;margin:12px 0}.graph-actions{display:flex;gap:5px;margin:8px 0 16px}.graph-actions button{padding:6px 9px;font-size:12px}.graph-sidebar .checkbox-label input{margin:0}.graph-sidebar h2{font-size:14px;margin:12px 0}.graph-sidebar small{display:block;overflow-wrap:anywhere;color:var(--cv-muted)}.graph-source{white-space:normal;overflow-wrap:anywhere;text-align:left;padding:4px;font-size:12px;color:var(--cv-link);border:0}.graph-error{color:var(--cv-danger)}#graph-status{font-size:12px;padding:4px 0 8px;color:var(--cv-muted)}#graph-warnings{max-height:90px;overflow:auto}#graph-evidence{border-top:1px solid var(--cv-border);margin-top:20px}.graph-box rect{fill:var(--cv-surface);stroke:var(--cv-input-border);stroke-width:1.5}.graph-box.group rect{fill:var(--cv-info-bg);stroke:var(--cv-accent)}.graph-box.open rect{fill:var(--cv-bg);stroke:var(--cv-accent);stroke-dasharray:5 3}.graph-box.cycle rect{stroke:var(--cv-warning);stroke-width:3}.graph-box.match rect{fill:var(--cv-selected);stroke:var(--cv-accent);stroke-width:4}.graph-box text{fill:var(--cv-text);font:13px system-ui}.graph-box .graph-node-sub{fill:var(--cv-muted);font-size:11px}.graph-box [data-node],.graph-box[data-node]{cursor:pointer}.graph-edges{color:var(--cv-muted)}.graph-edge-line{fill:none;stroke:var(--cv-muted);stroke-width:1.5;pointer-events:none}.graph-edge-hit{stroke:transparent;stroke-width:14;fill:none;cursor:pointer}.graph-edges text{font:12px system-ui;fill:var(--cv-text);paint-order:stroke;stroke:var(--cv-bg);stroke-width:4;cursor:pointer}.graph-edges g:hover .graph-edge-line,.graph-edges g:focus .graph-edge-line{stroke:var(--cv-accent);stroke-width:3}.graph-box:focus rect{stroke:var(--cv-accent);stroke-width:4}@media(max-width:800px){body.graph-page{height:auto;overflow:auto}.graph-workspace{grid-template-columns:1fr}.graph-canvas{height:65vh;flex:auto}.graph-sidebar{border-left:0;border-top:1px solid var(--cv-border);overflow:visible}.graph-page main{display:block}}
 
 .graph-canvas svg{color:var(--cv-muted)}.graph-canvas [tabindex]:focus{outline:none}.graph-box.open text:focus{fill:var(--cv-accent);text-decoration:underline}
+
+/* Developer plots use the entire content width, with settings above the list. */
+.developers-workspace{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+.developers-workspace>.graph-main{grid-row:2}
+.developer-settings{grid-row:1;margin:0;padding:8px 12px;min-width:0}
+.developer-settings .graph-sidebar{border:0;padding:12px 0 0;overflow:visible}
+.developer-settings[open]{max-height:45vh;overflow:auto}
+.developer-settings .graph-sidebar form{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 16px}
+.developer-settings .graph-sidebar form>.hint{grid-column:1/-1}
+.developer-settings .graph-sidebar form>h2{grid-column:1/-1;margin:0}
+.developer-settings label{margin-bottom:6px}
+.developer-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}
+.developer-table th,.developer-table td{text-align:left;padding:6px;overflow-wrap:anywhere}
+.developer-table th button{white-space:normal;padding:4px;border:0;font-size:12px}
+.developer-table th:first-child{width:22%}
+.developer-table th:last-child{width:110px}
+.developer-table td button{padding:5px;font-size:12px}
+.developer-table .developer-row{background:var(--cv-subtle)}
+.developer-table .developer-plot-row>td{padding:0 6px 12px;border-bottom:1px solid var(--cv-border)}
+.developer-boxplot{position:relative;color:var(--cv-accent)}
+.developer-boxplot svg{display:block;overflow:visible}
+.developer-boxplot line,.developer-boxplot rect{stroke:currentColor;stroke-width:1.5}
+.developer-boxplot rect{fill:var(--cv-selected)}
+.developer-boxplot circle{fill:currentColor}
+.developer-boxplot .developer-plot-median{stroke-width:3}
+.developer-boxplot .developer-plot-guide{stroke:var(--cv-border);stroke-width:1}
+.developer-boxplot .developer-plot-axis{stroke:var(--cv-muted);stroke-width:1}
+.developer-boxplot text{fill:var(--cv-muted);font:11px system-ui}
+.developer-plot-tooltip{display:none;position:absolute;bottom:100%;left:0;max-width:100%;padding:6px 9px;border:1px solid var(--cv-border);border-radius:5px;background:var(--cv-surface);color:var(--cv-text);box-shadow:0 2px 8px var(--cv-shadow);font-size:12px;pointer-events:none;z-index:2}
+.developer-boxplot:hover .developer-plot-tooltip,.developer-boxplot:focus-within .developer-plot-tooltip{display:block}
+.developer-boxplot svg:focus-visible{outline:2px solid var(--cv-accent);outline-offset:-2px}
+.developer-no-data{padding:14px 4%}
+@media(max-width:800px){.developers-workspace{height:auto;grid-template-rows:auto auto}.developer-table{font-size:10px}.developer-table th,.developer-table td{padding:4px 2px}.developer-table th button,.developer-table td button{font-size:10px;padding:3px;white-space:normal}.developer-table th:last-child{width:65px}}
+.developers-workspace .graph-tools select{width:auto;margin:0;padding:5px 8px}
+.developer-plot-overflow text{fill:var(--cv-accent);font-weight:600}
+.developer-plot-overflow text:first-child{font-size:26px}
+
+.developers-workspace .graph-tools .checkbox-label input{width:auto;margin:0;flex:none}

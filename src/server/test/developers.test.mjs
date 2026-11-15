@@ -31,12 +31,13 @@ test('attribution merges aliases, counts unique commits, keeps raw activity sepa
   CREATE TABLE git_file_changes(repository_id,commit_hash,path,lines_created,lines_removed,lines_changed);
   INSERT INTO git_commits VALUES(1,'a','Alice','alias@example.com','2026-01-01',0),(1,'b','Bob','bob@example.com','2026-01-02',0),(1,'m','Merge','merge@example.com','2026-01-03',1);
   INSERT INTO git_file_changes VALUES(1,'a','a.ts',3,0,1),(1,'a','b.ts',2,0,0),(1,'a','ignored.ts',100,0,0),(1,'b','a.ts',1,0,1),(1,'m','a.ts',99,0,0);`);db.close();
-  const files=[{path:'a.ts',score:100,effective_lines:10},{path:'b.ts',score:20,effective_lines:0}], preset=defaultDeveloperPreset();
+  const files=[{path:'a.ts',score:100,effective_lines:10,function_count:2},{path:'b.ts',score:20,effective_lines:0,function_count:0}], preset=defaultDeveloperPreset();
   const identities=[{name:'Canonical Alice',email:'alice@example.com',aliases:['alias@example.com']}];
   const result=developerData(path,files,preset,identities);
   assert.equal(result.developers.length,2);
   const alice=result.developers.find(p=>p.id==='alice@example.com');
   assert.equal(alice.name,'Canonical Alice');assert.equal(alice.commits.length,1);assert.equal(alice.totals.created,5);assert.equal(alice.totals.changed,1);
+  assert.equal(alice.files[0].function_count,2);assert.equal(alice.files[1].function_count,0);
   assert.equal(alice.files[0].weight,2/3);assert.equal(result.mainAuthors['a.ts'].id,alice.id);
   assert.equal(result.authorship['a.ts'].authors[0].share,2/3);
   assert.equal(result.authorship['a.ts'].basis,'churn');

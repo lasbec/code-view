@@ -116,6 +116,7 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal(developers.value.developers.length,1);
   assert.equal(developers.value.developers[0].totals.created,1);
   assert.equal(developers.value.developers[0].score,listing.value.files[0].score);
+  assert.equal(developers.value.developers[0].files[0].function_count,1);
   assert.match(rendered.value.treeMapHtml, /mainAuthor/);
   const savedDeveloper = await call('developerPresets','POST',{...state.developerPresets[0],name:'Test developers'});
   assert.equal(savedDeveloper.status,200);

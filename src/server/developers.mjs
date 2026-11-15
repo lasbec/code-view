@@ -75,7 +75,7 @@ export function developerData(path, files, preset, identities = [], options = {}
       if (config.normalization === 'scale' && score !== null) score = max > 0 ? score/max*100 : 0;
       for (const a of values) {
         const weight = config.attribution === 'winner' ? Number(a === winner) : a.value/total;
-        people.get(a.id).files.push({ path, rawScore: file.score, score, weight, contribution: score === null ? null : score*weight, fallback });
+        people.get(a.id).files.push({ path, function_count: file.function_count ?? null, rawScore: file.score, score, weight, contribution: score === null ? null : score*weight, fallback });
       }
     }
     const developers = [...people.values()].map(person => {
