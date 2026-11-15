@@ -28,39 +28,43 @@ test('invalid progress never becomes a UI counter', () => {
   assert.equal(events.length, 0); assert.equal(logs.length, 2);
 });
 test('both bars show exact counts and distinguish finalizing, empty results, and cancellation', () => {
-  const job = { name: '<Sample>', status: 'running', activeInspector: 'git', progress: {
-    code: { status: 'done', completed: 85, total: 85 }, git: { status: 'processing', completed: 15, total: 200 },
-  } };
-  let html = progressHtml(job);
+  const jobs = [
+    { id: 'repo', name: '<Sample>', inspector: 'code', status: 'succeeded', progress: { status: 'done', completed: 85, total: 85 } },
+    { id: 'repo', name: '<Sample>', inspector: 'git', status: 'running', progress: { status: 'processing', completed: 15, total: 200 } },
+  ];
+  let html = progressHtml(jobs);
   assert.match(html, /85\/85 files/); assert.match(html, /15\/200 commits/);
   assert.match(html, /&lt;Sample&gt;/); assert.match(html, /max="200" value="15"/);
-  job.progress.git.detail = '<Preparing dependencies>';
-  assert.match(progressHtml(job), /&lt;Preparing dependencies&gt;/);
-  job.progress.git.status = 'finalizing'; html = progressHtml(job);
+  const job = jobs[1];
+  job.progress.detail = '<Preparing dependencies>';
+  assert.match(progressHtml(jobs), /&lt;Preparing dependencies&gt;/);
+  job.progress.status = 'finalizing'; html = progressHtml([job]);
   assert.match(html, /Finalizing/); assert.doesNotMatch(html, /max="200" value=/);
-  job.cancelled = true; assert.match(progressHtml(job), /Cancelling/);
-  job.status = 'cancelled'; job.progress.git.status = 'cancelled';
-  assert.match(progressHtml(job), /max="200" value="15"/);
-  job.progress.code = { status: 'done', completed: 0, total: 0 };
-  assert.match(progressHtml(job), /0\/0 files/);
+  job.cancelled = true; assert.match(progressHtml(jobs), /Cancelling/);
+  job.status = 'cancelled'; job.progress.status = 'cancelled';
+  assert.match(progressHtml(jobs), /max="200" value="15"/);
+  jobs[0].progress = { status: 'done', completed: 0, total: 0 };
+  assert.match(progressHtml(jobs), /0\/0 files/);
 });
 test('counter updates arrive before inspector exit; failure and cancellation keep the last count', async () => {
   const jobs = new Jobs('/tmp', null);
-  const prepare = () => { jobs.current = { status: 'running', progress: { code: { status: 'preparing', completed: 0, total: null } }, cancelled: false, log: '' }; };
+  let task;
+  const prepare = () => { task = { job: { id: 'repo', inspector: 'code', status: 'running', progress: { status: 'preparing', completed: 0, total: null }, cancelled: false, log: '' } }; jobs.tasks.set('repo:code', task); };
   prepare();
   const script = `process.stderr.write('CODE_VIEW_PROGRESS {"status":"processing","completed":85,"total":15698}\\n'); setTimeout(() => process.exit(1), 800);`;
-  const run = jobs.command(process.execPath, ['-e', script], false, 'code');
+  const run = jobs.command(task, process.execPath, ['-e', script], false, true);
   // Observe the parsed event as it arrives, rather than assuming subprocess startup time.
   const deadline = Date.now() + 5000;
-  while (jobs.current.progress.code.completed !== 85 && Date.now() < deadline) await new Promise(r => setTimeout(r, 10));
-  assert.equal(jobs.current.status, 'running');
-  assert.equal(jobs.current.progress.code.completed, 85);
+  while (task.job.progress.completed !== 85 && Date.now() < deadline) await new Promise(r => setTimeout(r, 10));
+  assert.equal(task.job.status, 'running');
+  assert.equal(task.job.progress.completed, 85);
   await assert.rejects(run, /exited with code 1/);
-  assert.equal(jobs.current.progress.code.completed, 85);
+  assert.equal(task.job.progress.completed, 85);
   prepare();
-  const cancel = jobs.command(process.execPath, ['-e', script.replace('800', '30000')], false, 'code');
-  while (jobs.current.progress.code.completed !== 85) await new Promise(r => setTimeout(r, 10));
+  const cancel = jobs.command(task, process.execPath, ['-e', script.replace('800', '30000')], false, true);
+  const cancelDeadline = Date.now() + 5000;
+  while (task.job.progress.completed !== 85 && Date.now() < cancelDeadline) await new Promise(r => setTimeout(r, 10));
   jobs.cancel();
   await assert.rejects(cancel, /cancelled/);
-  assert.equal(jobs.current.progress.code.completed, 85);
+  assert.equal(task.job.progress.completed, 85);
 });

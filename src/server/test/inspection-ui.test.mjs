@@ -1,0 +1,45 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { defaultPreset, defaultFilter, defaultTreemap } from '../store.mjs';
+const requireTreemap = createRequire(new URL('../../treemap/package.json', import.meta.url));
+const { JSDOM } = requireTreemap('jsdom'), { build } = requireTreemap('esbuild');
+const settle = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve)); };
+
+test('inspection controls allow parallel starts and editing, preserve individual output panels, and cancel only the chosen inspector', async t => {
+  const bundle = await build({ entryPoints: [new URL('../public/app.js', import.meta.url).pathname], bundle: true, format: 'esm', write: false });
+  const dom = new JSDOM(await readFile(new URL('../public/index.html', import.meta.url), 'utf8'), { url: 'http://127.0.0.1:3210/#inspections', runScripts: 'outside-only' });
+  t.after(() => dom.window.close());
+  const state = { inspections: [{ id: 'repo', name: 'Example', repository: '/repo', tsconfig: 'src/tsconfig.json' }], presets: [{ id: 'preset', ...defaultPreset() }], filters: [{ id: 'filter', ...defaultFilter() }], treemaps: [{ id: 'treemap', ...defaultTreemap() }], selection: { inspection: 'repo' }, jobs: [] };
+  let poll; const requests = [];
+  dom.window.setInterval = callback => { poll = callback; };
+  dom.window.fetch = async (path, options) => {
+    const data = options.body && JSON.parse(options.body); requests.push({ path, data });
+    if (path === '/api/run') state.jobs.push({ id: data.id, name: 'Example', inspector: data.inspector, status: 'running', progress: { status: 'processing', completed: 1, total: 20 } });
+    if (path === '/api/cancel') state.jobs.find(j => j.id === data.id && j.inspector === data.inspector).cancelled = true;
+    return { ok: true, json: async () => path === '/api/state' ? structuredClone(state) : { ok: true } };
+  };
+  await dom.window.eval(`(async()=>{${bundle.outputFiles[0].text}\n})()`);
+  const doc = dom.window.document, run = kind => doc.querySelector(`[data-action="run"][data-inspector="${kind}"]`);
+  const form = doc.querySelector('#inspection-form');
+  form.querySelector('[name="name"]').value = 'Unsaved name';
+  run('code').click(); await settle();
+  assert.equal(run('code').disabled, true); assert.equal(run('git').disabled, false); assert.equal(run('both').disabled, true);
+  run('git').click(); await settle();
+  assert.equal(state.jobs.length, 2); assert.equal(run('git').disabled, true);
+  assert.equal(form.querySelector('fieldset').disabled, false);
+  assert.equal(doc.querySelector('[data-action="delete-inspection"]').disabled, true);
+  const codeOutput = doc.querySelector('details[data-key="repo:code"]'); codeOutput.open = true;
+  await poll();
+  assert.equal(doc.querySelector('#inspection-form'), form);
+  assert.equal(form.querySelector('[name="name"]').value, 'Unsaved name');
+  assert.equal(doc.querySelector('details[data-key="repo:code"]').open, true);
+  assert.equal(doc.querySelector('details[data-key="repo:git"]').open, false);
+  doc.querySelector('[data-action="cancel"][data-inspector="code"]').click(); await settle();
+  assert.deepEqual(requests.find(r => r.path === '/api/cancel').data, { id: 'repo', inspector: 'code' });
+  assert.equal(state.jobs[1].cancelled, undefined);
+  state.jobs[0].status = 'cancelled'; state.jobs[0].progress.status = 'cancelled';
+  await poll();
+  assert.equal(run('code').disabled, false); assert.equal(run('git').disabled, true);
+});

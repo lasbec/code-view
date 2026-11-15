@@ -69,7 +69,6 @@ function render() {
   if (hadDetail && listKey === currentTreeKey() && ['files', 'functions'].includes(route()) && view.querySelector(`[data-list-route="${route()}"]`)) return;
   if (hadDetail && route() === 'graph' && view.querySelector('.graph-workspace')) return;
   if (hadDetail && route() === 'treemap' && document.querySelector('#map iframe')) return;
-  const outputOpen = document.querySelector('#job details')?.open ?? false;
   document.body.classList.toggle('graph-page', ['graph', 'developers'].includes(route()));
   document.body.classList.toggle('treemap-page', route() === 'treemap');
   requestNumber++;
@@ -80,6 +79,7 @@ function render() {
   else if (['files', 'functions'].includes(route())) listView();
   else if (route() === 'developers') { listKey = currentTreeKey(); view.innerHTML = ''; mountDevelopers(view, { state, api, reload: load }); }
   else if (route() === 'graph') {
+    listKey = currentTreeKey();
     view.innerHTML = '';
     mountGraph(view, { state, api, reload: load, openDetail: (kind, id, line) => {
       const p = selectedPreset();
@@ -92,8 +92,6 @@ function render() {
   const toolbar = view.querySelector('.toolbar');
   document.querySelector('#configuration-bar').replaceChildren(...(toolbar ? [toolbar] : []));
   updateProgress();
-  const output = document.querySelector('#job details');
-  if (output) output.open = outputOpen;
 }
 function listView() {
   listKey = currentTreeKey();
@@ -106,15 +104,14 @@ function listView() {
 }
 function inspectionView() {
   const c = !newInspection && selectedInspection() || { name: '', repository: '', tsconfig: 'tsconfig.json', include: [], exclude: [], commits: null };
-  const busy = state.job?.status === 'running' && state.job.id === c.id;
-  view.innerHTML = heading('Inspection configuration', 'Define a repository once. Code and Git inspection share the same results.') +
+  view.innerHTML = heading('Inspection configuration', 'Code and Git inspect this repository independently. Save changes before starting a new run.') +
     `<div class="card toolbar">${selection(state.inspections, c.id, 'Saved inspection', 'inspection')}<button data-action="new-inspection">New configuration</button></div>
-    <form id="inspection-form" class="card" data-id="${esc(c.id)}"><fieldset ${busy ? 'disabled' : ''}><h2>${c.id ? 'Repository settings' : 'New inspection'}</h2>
+    <form id="inspection-form" class="card" data-id="${esc(c.id)}"><fieldset><h2>${c.id ? 'Repository settings' : 'New inspection'}</h2>
     ${input('Configuration name', 'name', c.name, 'required')}${input('Repository directory', 'repository', c.repository, 'required placeholder="/home/you/projects/application"')}
     <p class="hint">Use the repository root. Inspection reads current files and the current branch history.</p><div class="row">${input('TypeScript configuration', 'tsconfig', c.tsconfig, 'required')}${input('Git commit limit', 'commits', c.commits, 'type="number" min="1" step="1" placeholder="All history"')}</div>
     <div class="row">${patterns('Include code paths', 'include', c.include)}${patterns('Exclude code paths', 'exclude', c.exclude)}</div><p class="hint">Code patterns are relative to the TypeScript configuration directory. Empty filters include all project files.</p>
     <fieldset><legend>Author identities</legend><p class="hint">Combine known email addresses for the same person. Applies to all treemap presets for this repository without another inspection.</p><div id="author-identities">${(c.authorIdentities ?? []).map(authorIdentityHtml).join('')}</div><button type="button" data-action="add-author">Add author identity</button></fieldset>
-    <div class="actions"><button class="primary" type="submit">Save configuration</button>${c.id ? '<button type="button" data-action="delete-inspection" class="danger">Delete</button>' : ''}</div></fieldset><p data-busy-hint ${busy ? '' : 'hidden'}>Inspection is running. Cancel it or wait before editing.</p></form>`;
+    <div class="actions"><button class="primary" type="submit">Save configuration</button>${c.id ? '<button type="button" data-action="delete-inspection" class="danger">Delete</button>' : ''}</div></fieldset></form>${c.id ? `<div class="card">${runControls(c)}<div id="inspection-results">${inspectionStatusHtml(c)}</div></div>` : ''}`;
 }
 const configTabs = () => `<div class="config-tabs">${[['presets','Score configuration'],['filters','Filters'],['treemap-settings','Treemap settings']].map(([id,label]) => `<a href="#${id}" class="${route() === id ? 'active' : ''}">${label}</a>`).join('')}</div>`;
 function presetView() {
@@ -136,43 +133,47 @@ function settingsView() {
     `<div class="card toolbar">${selection(state[collection], p.id, 'Saved configuration', key)}<button data-action="new-settings">New</button><button data-action="duplicate-settings" ${p.id ? '' : 'disabled'}>Duplicate</button></div>
     <form id="settings-form" class="card settings-config" data-collection="${collection}" data-id="${esc(p.id)}">${input('Configuration name','name',p.name,'required')}${filters ? `<div class="row">${patterns('Include paths','include',o.include)}${patterns('Exclude paths','exclude',o.exclude)}</div><p class="hint">Paths are relative to the repository root. Empty includes match all files.</p><div class="row">${input('Git history since','since',o.since,'placeholder="2025-01-01T00:00:00Z"')}${input('Git history until','until',o.until,'placeholder="2026-12-31T23:59:59Z"')}</div><p class="hint">Dates filter imported Git commits, not the analyzed source snapshot.</p>` : `<div class="row">${metricSelect('File tile size','area',p.config.area)}${functionAreaSelect(p.config.functionArea)}</div><h2>Heat scale</h2><p class="hint">Leave blank for automatic bounds from the selected score and filter.</p><div class="row">${['min','yellowFrom','redFrom','max'].map((k,i) => input(['Minimum','Yellow from','Red from','Maximum'][i], 'heat-'+k,h[k],'type="number" step="any" placeholder="Automatic"')).join('')}</div><button type="button" data-action="use-local-heat">Use current legend values</button>`}<div class="actions"><button class="primary">Save &amp; apply</button>${p.id ? '<button type="button" class="danger" data-action="delete-settings">Delete</button>' : ''}</div></form>`;
 }
-function jobHtml() {
-  const j = state.job;
-  if (!j) return '';
-  return `<div class="status ${j.status === 'failed' ? 'failed' : ''}">${j.branch ? `<span class="job-branch" title="${esc(j.branch)}">Branch: ${esc(j.branch)}</span>` : ''}${j.status === 'running' ? `<button data-action="cancel" ${j.cancelled ? 'disabled' : ''}>${j.cancelled ? 'Cancelling…' : 'Cancel inspection'}</button>` : ''}<details><summary>Inspection output</summary><pre>${esc(j.error || '')}\n${esc(j.log)}</pre></details></div>`;
+function runControls(c) {
+  return ['code', 'git', 'both'].map(inspector => `<button data-action="run" data-inspector="${inspector}">${inspector === 'both' ? 'Run both' : `Run ${inspector === 'code' ? 'Code' : 'Git'}`}</button>`).join('');
+}
+function inspectionStatusHtml(c) {
+  if (!c) return '';
+  const items = ['code', 'git'].map(kind => {
+    const status = c.inspectorStates?.[kind], result = status?.result;
+    return `<p class="hint"><strong>${kind === 'code' ? 'Code' : 'Git'}:</strong> ${result ? `${esc(new Date(result.completedAt).toLocaleString())} · ${esc(result.branch)}${result.head ? ` · ${esc(result.head.slice(0, 8))}` : ''}${status.stale ? ' · Settings changed — rerun required' : ''}` : 'No results'}</p>`;
+  }).join('');
+  const code = c.inspectorStates?.code.result, git = c.inspectorStates?.git.result;
+  const different = code && git && (code.head !== git.head || code.dirty);
+  return items + (different ? '<p class="badge">Code and Git results represent different repository states.</p>' : '') + (c.hasResults && !git ? '<p class="hint">Git metrics are not available. Run Git inspection to add history.</p>' : '');
 }
 function updateProgress() {
-  document.querySelector('#inspection-footer').hidden = !state.job;
-  document.querySelector('#progress').innerHTML = progressHtml(state.job);
-  const job = document.querySelector('#job');
-  if (job) {
-    const open = job.querySelector('details')?.open ?? false;
-    const cancelFocused = document.activeElement?.matches('[data-action="cancel"]');
-    job.innerHTML = jobHtml();
-    if (job.querySelector('details')) job.querySelector('details').open = open;
-    if (cancelFocused) job.querySelector('[data-action="cancel"]')?.focus();
-  }
-  const form = document.querySelector('#inspection-form');
-  if (form) {
-    const busy = state.job?.status === 'running' && form.dataset.id === state.job.id;
-    form.querySelector('fieldset').disabled = busy;
-    form.querySelector('[data-busy-hint]').hidden = !busy;
-  }
-  const run = document.querySelector('[data-action="run"]');
-  if (run) run.disabled = state.job?.status === 'running';
+  const jobs = state.jobs ?? [];
+  document.querySelector('#inspection-footer').hidden = !jobs.length;
+  document.querySelector('#progress').innerHTML = progressHtml(jobs);
+  const host = document.querySelector('#job');
+  const open = new Set([...host.querySelectorAll('details[open]')].map(node => node.dataset.key));
+  const focused = document.activeElement?.closest('[data-action="cancel"]')?.dataset;
+  host.innerHTML = jobs.map(j => `<div class="status ${j.status === 'failed' ? 'failed' : ''}"><strong>${esc(j.name)} · ${esc(j.inspector)}</strong>${j.branch ? `<span class="job-branch">Branch: ${esc(j.branch)}</span>` : ''}${j.status === 'running' ? `<button data-action="cancel" data-id="${esc(j.id)}" data-inspector="${j.inspector}" ${j.cancelled ? 'disabled' : ''}>${j.cancelled ? 'Cancelling…' : `Cancel ${j.inspector}`}</button>` : ''}<details data-key="${esc(j.id)}:${j.inspector}" ${open.has(`${j.id}:${j.inspector}`) ? 'open' : ''}><summary>Inspection output</summary><pre>${esc(j.error || '')}\n${esc(j.log)}</pre></details></div>`).join('');
+  if (focused) [...host.querySelectorAll('[data-action="cancel"]')].find(node => node.dataset.id === focused.id && node.dataset.inspector === focused.inspector)?.focus();
+  const c = selectedInspection();
+  for (const button of document.querySelectorAll('[data-action="run"]')) button.disabled = jobs.some(j => j.id === c?.id && j.status === 'running' && (button.dataset.inspector === 'both' || j.inspector === button.dataset.inspector));
+  const remove = document.querySelector('[data-action="delete-inspection"]');
+  if (remove) remove.disabled = jobs.some(j => j.id === c?.id && j.status === 'running');
+  const results = document.querySelector('#inspection-results');
+  if (results) results.innerHTML = inspectionStatusHtml(c);
 }
 function treemapView() {
   const c = selectedInspection(), p = selectedPreset();
   view.innerHTML =
-    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}<label>Score<select data-select="preset">${options(state.presets, colorByAuthor ? null : p?.id)}<optgroup label="Special configurations"><option value="__author__" ${colorByAuthor ? 'selected' : ''}>Color by author</option></optgroup></select></label>${selection(state.filters, selectedFilter()?.id, 'Filter', 'filter')}${selection(state.treemaps, selectedTreemap()?.id, 'Treemap', 'treemap')}<label class="checkbox-label"><input type="checkbox" id="show-functions" ${showFunctions ? 'checked' : ''}>Show functions</label><label class="checkbox-label"><input type="checkbox" id="show-directories" ${showDirectories ? 'checked' : ''}>Show directories</label>${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}${p ? ` · Area: ${esc(selectedTreemap()?.config.area)}.` : ''}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
+    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}<label>Score<select data-select="preset">${options(state.presets, colorByAuthor ? null : p?.id)}<optgroup label="Special configurations"><option value="__author__" ${colorByAuthor ? 'selected' : ''}>Color by author</option></optgroup></select></label>${selection(state.filters, selectedFilter()?.id, 'Filter', 'filter')}${selection(state.treemaps, selectedTreemap()?.id, 'Treemap', 'treemap')}<label class="checkbox-label"><input type="checkbox" id="show-functions" ${showFunctions ? 'checked' : ''}>Show functions</label><label class="checkbox-label"><input type="checkbox" id="show-directories" ${showDirectories ? 'checked' : ''}>Show directories</label>${c ? runControls(c) : ''}</div><div id="map-state">${inspectionStatusHtml(c)}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
   if (!c) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Please configure inspection</h2><p class="muted">Choose a local repository to get started.</p><a class="button primary" href="#inspections">Configure inspection</a></div>';
-  else if (!c.hasResults) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Start inspection</h2><p class="muted">Run the inspectors to explore this repository.</p></div>';
+  else if (!c.hasResults) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Start inspection</h2><p class="muted">Run Code inspection to explore this repository. Git results alone provide status until Code results are available.</p></div>';
   else if (!p) document.querySelector('#map').innerHTML = '<div class="card empty"><h2>Please configure a treemap preset</h2><a class="button" href="#presets">Create preset</a></div>';
   else if (!selectedFilter() || !selectedTreemap()) document.querySelector('#map').innerHTML = '<div class="card empty"><h2>Choose a filter and treemap settings</h2><a href="#filters">Configure filters</a> · <a href="#treemap-settings">Configure treemap</a></div>';
   else { document.querySelector('#map').innerHTML = '<p class="muted">Calculating treemap…</p>'; drawMap(c, p, requestNumber); }
   treeKey = currentTreeKey();
 }
-function currentTreeKey() { return JSON.stringify([showFunctions, state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset(), selectedFilter(), selectedTreemap(), state.developerPresets]); }
+function currentTreeKey() { return JSON.stringify([showFunctions, state.selection, selectedInspection()?.inspectorStates, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset(), selectedFilter(), selectedTreemap(), state.developerPresets]); }
 async function drawMap(c, p, number) {
   try {
     const result = await api(`treemap?inspection=${encodeURIComponent(c.id)}&preset=${encodeURIComponent(p.id)}&showFunctions=${showFunctions}`);
@@ -263,8 +264,8 @@ document.addEventListener('click', async event => {
       if (!confirm(`Delete "${c.name}"${inspection ? ' and its inspection results' : ''}?`)) return;
       await api(`${inspection ? 'inspections' : 'presets'}/${c.id}`, 'DELETE');
     }
-    if (action === 'run') await api('run', 'POST', { id: selectedInspection().id });
-    if (action === 'cancel') await api('cancel', 'POST', {});
+    if (action === 'run') await api('run', 'POST', { id: selectedInspection().id, inspector: button.dataset.inspector });
+    if (action === 'cancel') await api('cancel', 'POST', { id: button.dataset.id, inspector: button.dataset.inspector });
     await load();
     if (action === 'run' || action === 'cancel') updateProgress(); else render();
   } catch (e) { notice(e); }
@@ -275,7 +276,7 @@ let polling = false;
 setInterval(async () => {
   if (polling || !state) return;
   polling = true;
-  try { await load(); if ((route() === 'treemap' && treeKey !== currentTreeKey()) || (['files', 'functions', 'developers'].includes(route()) && listKey !== currentTreeKey())) render(); else updateProgress(); } catch (e) { notice(e); } finally { polling = false; }
+  try { await load(); if ((route() === 'treemap' && treeKey !== currentTreeKey()) || (['files', 'functions', 'developers', 'graph'].includes(route()) && listKey !== currentTreeKey())) render(); else updateProgress(); } catch (e) { notice(e); } finally { polling = false; }
 }, 1500);
 
 window.addEventListener('message', async event => {

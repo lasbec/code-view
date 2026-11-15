@@ -73,7 +73,7 @@ module access are not provided; asynchronous formula results are rejected.
 - `score_contributions`: ordered, named field results and diagnostic details.
 
 Each run is committed in one transaction. The content key includes the computation
-version, definition and data filters. Heat and area settings are excluded. A new
-inspection publishes a replacement database and naturally invalidates all prior
-scores. The worker checks database generation before returning results. Existing
+version, definition and data filters. Heat and area settings are excluded. The server composes each successful Code/Git result pair into a separate consumer
+database. A new result from either inspector changes that pair and invalidates
+scores; inspector databases never contain score tables. The worker checks database generation before returning results. Existing
 presets were transferred manually; there is no legacy migration path.

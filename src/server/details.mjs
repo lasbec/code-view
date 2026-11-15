@@ -42,7 +42,7 @@ export async function inspectDetail(path, config, id, kind, model, expanded) {
     try {
       const git = async args => (await exec('git', ['-C', config.repository, ...args], { maxBuffer: 8 * 1024 * 1024 })).stdout.trim();
       const head = await git(['rev-parse', 'HEAD']);
-      const tip = query('git_branches', 'SELECT tip_hash FROM git_branches WHERE name=?', config.result?.branch ?? '')[0]?.tip_hash;
+      const tip = config.results?.code?.head ?? query('git_branches', 'SELECT tip_hash FROM git_branches WHERE name=?', config.result?.branch ?? '')[0]?.tip_hash;
       if (!tip) warnings.push('Inspected commit is unavailable. Source consistency cannot be verified.');
       else if (head !== tip) warnings.push(`Current commit ${head.slice(0, 8)} differs from inspected commit ${tip.slice(0, 8)}. Metrics, references and line locations may be outdated.`);
       if (await git(['status', '--porcelain'])) warnings.push('Uncommitted changes: current source may differ from inspection. Metrics, references and line locations may be outdated.');

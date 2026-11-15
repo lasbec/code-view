@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import { openStore, validateInspection, validatePreset, validateFilter, validateTreemap, defaultTreemap, check } from './store.mjs';
-import { Jobs, usable, fingerprint } from './jobs.mjs';
+import { Jobs } from './jobs.mjs';
 
 async function body(req) {
   check(req.headers['content-type']?.split(';')[0] === 'application/json', 'Send application/json.');
@@ -54,8 +54,8 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         return send(await renderer.editor(value));
       }
       if (req.method === 'GET' && url.pathname === '/api/state') {
-        for (const c of state.inspections) { c.hasResults = usable(jobs.path(c.id)); c.stale = c.hasResults && c.result?.fingerprint !== fingerprint(c); }
-        return send({ ...state, job: jobs.current });
+        for (const c of state.inspections) { c.inspectorStates = jobs.states(c); c.hasResults = c.inspectorStates.code.hasResults; c.stale = Object.values(c.inspectorStates).some(s => s.stale); }
+        return send({ ...state, jobs: jobs.list });
       }
       if (req.method === 'POST' && url.pathname === '/api/selection') {
         const value = await body(req);
@@ -68,13 +68,16 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
       if (match && ['POST', 'PUT', 'DELETE'].includes(req.method)) {
         const [, collection, id] = match;
         check(req.method === 'POST' ? !id : !!id, 'Invalid configuration route.');
-        check(!(collection === 'inspections' && jobs.current?.status === 'running' && jobs.current.id === id), 'Wait for this inspection to finish or cancel it before editing.');
+        check(!(collection === 'inspections' && req.method === 'DELETE' && jobs.running(id)), 'Wait for this inspection to finish or cancel it before deleting.');
         const value = req.method === 'DELETE' ? null : (collection === 'inspections' ? validateInspection : collection === 'graphPresets' ? validateGraphPreset : collection === 'developerPresets' ? validateDeveloperPreset : collection === 'filters' ? validateFilter : collection === 'treemaps' ? validateTreemap : validatePreset)(await body(req));
         const saved = await store.update(s => {
           const list = s[collection], index = list.findIndex(c => c.id === id), key = collection === 'inspections' ? 'inspection' : collection === 'graphPresets' ? 'graphPreset' : collection === 'developerPresets' ? 'developerPreset' : collection === 'filters' ? 'filter' : collection === 'treemaps' ? 'treemap' : 'preset';
           check(!id || index >= 0, 'Configuration not found.');
           if (req.method === 'DELETE') { list.splice(index, 1); if (s.selection[key] === id) s.selection[key] = list[0]?.id ?? null; return { ok: true }; }
           const item = { ...(id ? list[index] : {}), ...value, id: id || randomUUID() };
+          if (collection === 'inspections' && id && list[index].repository !== item.repository) {
+            item.results = {}; delete item.result; item.repositoryGeneration = randomUUID();
+          }
           if (id) list[index] = item; else list.push(item);
           s.selection[key] = item.id;
           return item;
@@ -83,18 +86,22 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         return send(saved);
       }
       if (req.method === 'POST' && url.pathname === '/api/run') {
-        const { id } = await body(req), config = state.inspections.find(c => c.id === id);
+        const { id, inspector = 'both' } = await body(req), config = state.inspections.find(c => c.id === id);
         check(config, 'Choose an inspection configuration.');
-        return send(jobs.start(config), 202);
+        return send(jobs.start(config, inspector), 202);
       }
-      if (req.method === 'POST' && url.pathname === '/api/cancel') { await body(req); jobs.cancel(); return send({ ok: true }); }
+      if (req.method === 'POST' && url.pathname === '/api/cancel') {
+        const { id, inspector = 'both' } = await body(req);
+        check(state.inspections.some(c => c.id === id) && ['code', 'git', 'both'].includes(inspector), 'Choose an inspection and code, git or both.');
+        jobs.cancel(id, inspector === 'both' ? undefined : inspector); return send({ ok: true });
+      }
       if (req.method === 'GET' && url.pathname === '/api/graph') {
         const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
         const p = state.graphPresets.find(p => p.id === url.searchParams.get('preset'));
-        check(c && p && usable(jobs.path(c.id)), 'Choose an inspection with results and a graph preset.');
+        check(c && p && jobs.states(c).code.hasResults, 'Choose an inspection with results and a graph preset.');
         const config = validateGraphPreset(p).config;
         const result = await new Promise((accept, reject) => {
-          const worker = new Worker(new URL('./graph-worker.mjs', import.meta.url), { workerData: { path: jobs.path(c.id), config } });
+          const worker = new Worker(new URL('./graph-worker.mjs', import.meta.url), { workerData: { path: jobs.analysis(c), config } });
           const timer = setTimeout(() => { worker.terminate(); reject(new Error('Graph calculation timed out. Narrow the analysis scope.')); }, 120000);
           worker.once('message', value => { clearTimeout(timer); accept(value); });
           worker.once('error', error => { clearTimeout(timer); reject(error); });
@@ -106,37 +113,37 @@ export async function createApp({ directory = process.env.CODE_VIEW_DATA_DIR || 
         const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
         const p = scoringContext(state.presets.find(c => c.id === url.searchParams.get('preset')), true);
         check(c && p, 'Choose an inspection and treemap configuration.');
-        check(usable(jobs.path(c.id)), 'Start inspection to generate results.');
+        check(jobs.states(c).code.hasResults, 'Start inspection to generate results.');
         const showFunctions = url.searchParams.get('showFunctions') ?? 'false';
         check(['true', 'false'].includes(showFunctions), 'Invalid function view flag.');
-        return send(await render(jobs.path(c.id), { ...p, developerPreset: state.developerPresets.find(d => d.id === state.selection.developerPreset) ?? state.developerPresets[0] ?? defaultDeveloperPreset(), options: { ...p.options, showFunctions: showFunctions === 'true', authorIdentities: c.authorIdentities ?? [] } }));
+        return send(await render(jobs.analysis(c), { ...p, developerPreset: state.developerPresets.find(d => d.id === state.selection.developerPreset) ?? state.developerPresets[0] ?? defaultDeveloperPreset(), options: { ...p.options, showFunctions: showFunctions === 'true', authorIdentities: c.authorIdentities ?? [] } }));
       }
       if (req.method === 'GET' && url.pathname === '/api/developers') {
         const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
         const p = scoringContext(state.presets.find(p => p.id === url.searchParams.get('preset')));
         const d = state.developerPresets.find(p => p.id === url.searchParams.get('developerPreset'));
-        check(c && p && d && usable(jobs.path(c.id)), 'Choose inspection results and both presets.');
+        check(c && p && d && jobs.states(c).code.hasResults, 'Choose inspection results and both presets.');
         const options = { ...p.options, showFunctions: true, includeZeroArea: true, authorIdentities: c.authorIdentities ?? [] };
-        return send(await render(jobs.path(c.id), { ...p, developerPreset: d, options }, false, 'developers'));
+        return send(await render(jobs.analysis(c), { ...p, developerPreset: d, options }, false, 'developers'));
       }
       if (req.method === 'GET' && url.pathname === '/api/list') {
         const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
         const p = scoringContext(state.presets.find(c => c.id === url.searchParams.get('preset')));
-        check(c && p && usable(jobs.path(c.id)), 'Choose an inspection with results and a preset.');
+        check(c && p && jobs.states(c).code.hasResults, 'Choose an inspection with results and a preset.');
         const options = { ...p.options, showFunctions: true, includeZeroArea: true, authorIdentities: c.authorIdentities ?? [] };
-        return send(await render(jobs.path(c.id), { ...p, options }, false, true));
+        return send(await render(jobs.analysis(c), { ...p, options }, false, true));
       }
       if (req.method === 'GET' && url.pathname === '/api/detail') {
         const c = state.inspections.find(c => c.id === url.searchParams.get('inspection'));
         const p = scoringContext(state.presets.find(c => c.id === url.searchParams.get('preset')));
-        check(c && p && usable(jobs.path(c.id)), 'Choose an inspection with results and a preset.');
+        check(c && p && jobs.states(c).code.hasResults, 'Choose an inspection with results and a preset.');
         const kind = url.searchParams.get('kind');
         check(['file', 'function'].includes(kind), 'Invalid item kind.');
         const options = { ...p.options, showFunctions: url.searchParams.get('showFunctions') === 'true', authorIdentities: c.authorIdentities ?? [] };
         if (url.searchParams.get('listContext') === 'true') Object.assign(options, { showFunctions: true, includeZeroArea: true });
-        const result = await render(jobs.path(c.id), { ...p, developerPreset: state.developerPresets.find(d => d.id === state.selection.developerPreset) ?? state.developerPresets[0] ?? defaultDeveloperPreset(), options }, true);
+        const result = await render(jobs.analysis(c), { ...p, developerPreset: state.developerPresets.find(d => d.id === state.selection.developerPreset) ?? state.developerPresets[0] ?? defaultDeveloperPreset(), options }, true);
         check(result.model?.ok, result.error || 'Unable to calculate scores.');
-        return send(await inspectDetail(jobs.path(c.id), { ...c, preset: p }, url.searchParams.get('id'), kind, result.model, result.expanded));
+        return send(await inspectDetail(jobs.analysis(c), { ...c, preset: p }, url.searchParams.get('id'), kind, result.model, result.expanded));
       }
       if (req.method === 'GET' && ['/score-editor.js','/score-code/editor-entry.js'].includes(url.pathname)) return send(await editorBundle(), 200, 'text/javascript');
       const assets = { '/score-fields.js': ['score-fields.js', 'text/javascript'], '/score-code/catalog.mjs': ['../../score-code/catalog.mjs', 'text/javascript'], '/frontend-state.js': ['frontend-state.js', 'text/javascript'], '/developers-view.js': ['developers-view.js', 'text/javascript'], '/graph-view.js': ['graph-view.js', 'text/javascript'], '/graph.css': ['graph.css', 'text/css'], '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/detail-view.js': ['detail-view.js', 'text/javascript'], '/list-view.js': ['list-view.js', 'text/javascript'], '/progress-view.js': ['progress-view.js', 'text/javascript'], '/metric-help.js': ['metric-help.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/themes.css': ['themes.css', 'text/css'], '/theme.js': ['theme.js', 'text/javascript'], '/preset-fields.js': ['preset-fields.js', 'text/javascript'], '/treemap/src/catalog.mjs': ['../../treemap/src/catalog.mjs', 'text/javascript'] };

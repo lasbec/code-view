@@ -22,9 +22,8 @@ The four navigation entries provide:
   across all presets for that repository. Identity changes apply to saved results
   without another inspection. Emails are trimmed and matched case-insensitively;
   overlapping identities are rejected. Names alone never combine different emails.
-- Treemap: independent inspection and global treemap preset selectors, manual
-  inspection, progress/output, cancellation, and an expandable warnings section.
-  Both inspectors have their own progress bar with exact processed/total counts.
+- Treemap: independent inspection and global treemap preset selectors, independent Code/Git starts and Run both, progress/output, targeted cancellation, and an expandable warnings section.
+  Both inspectors can run concurrently and have their own status, output and progress bar with exact processed/total counts. One run per inspector/configuration is allowed at a time.
   Code preparation also reports dependency fingerprint and symbol indexing activity
   before the completed-file counter begins.
   A compact panel remains visible on every page, even for another selected
@@ -61,9 +60,27 @@ open tabs. It is independent of inspection settings and treemap presets.
 
 Configuration changes require Save. Selectors save immediately and persist across
 restarts. Preset changes take effect on the next visit to the Treemap view without
-inspection. New inspections build a separate database and publish it only after
-both inspectors succeed. During reruns, errors, or cancellation, the previous
-successful treemap remains available. Editing a running inspection is blocked.
+inspection. Each inspector writes only its own tables into its own staging file and publishes
+its successful result independently. Code never reads or writes Git tables, and
+Git never reads or writes Code tables. Run both starts them in parallel. Failure
+or targeted cancellation preserves that inspector's last successful result and
+does not stop the other inspector. Configurations remain editable during runs;
+each run uses its saved start configuration. Deleting a running configuration is
+blocked until its runs finish or are cancelled.
+
+Code results become usable immediately without Git. Missing Git metrics are null
+inputs to score formulas and history/author displays are unavailable. Git results
+alone show status and completion time until Code provides the view's file population.
+The view combines the latest successful results from the same repository and shows
+separate timestamps, commits and configuration freshness; differing commits or an
+inspected dirty working tree produce a mixed-state notice. Source warnings use
+the Code result's own commit, independently of Git inspection.
+
+Changes to tsconfig/include/exclude mark only Code stale; a commit-limit change
+marks only Git stale. Score definitions, reusable path/date filters, display
+settings and author identities apply to existing measurements without reinspection.
+A repository switch retires both result associations, including in-flight results
+from the prior association. Saving never starts an inspection automatically.
 Server restart retains results and configuration; an interrupted run is discarded
 on the next run. Detached HEAD and unborn branches produce an inspection error.
 
@@ -91,8 +108,14 @@ include branch integrations and possible conflict resolutions; they do not prove
 that the merge author edited the file. Existing Git score metrics still include
 merges. No new inspection is needed for these lists or identity changes.
 
-Scores and named contributions are cached in `score_*` tables within each
-inspection's `analysis.sqlite`. The score module uses one reusable worker thread
+Inspector results are immutable `code-<generation>.sqlite` and
+`git-<generation>.sqlite` files. Consumers compose their tables into an
+`analysis-<source-pair>.sqlite` snapshot; scores and named contributions are cached
+in its `score_*` tables. A new result from either inspector selects a new pair and
+invalidates scores; existing requests can finish against their original snapshot.
+Snapshots are retained until the configuration is deleted. Existing combined
+`analysis.sqlite` results remain readable and are independently superseded by new
+runs without a migration script. The score module uses one reusable worker thread
 inside the server process. Formulas compile once per calculation; no subprocesses
 or per-function workers are created. Hanging fields become null after their time
 budget and other fields continue. Run only trusted user code; workers are not a

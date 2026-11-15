@@ -34,8 +34,8 @@ export function sources(db, options) {
   if (options.repository !== undefined && !repo) fail('Das ausgewählte Git-Repository wurde nicht gefunden.');
   if (repos.length && !repo) fail('Git-Repository nicht eindeutig zuordenbar. repository und gegebenenfalls codePrefix angeben.');
   let prefix = options.codePrefix;
-  if (prefix === undefined && repo) {
-    const root = normalizePath(repo.path);
+  if (prefix === undefined && (repo || metadata.repository)) {
+    const root = normalizePath(repo?.path ?? metadata.repository);
     if (base !== root && !base.startsWith(root + '/')) fail('Code- und Git-Pfadbasen passen nicht zusammen. codePrefix relativ zum Git-Repository angeben.');
     prefix = base.slice(root.length).replace(/^\//, '');
   }

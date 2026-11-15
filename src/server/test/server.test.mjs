@@ -77,12 +77,12 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal((await call('run', 'POST', { id: inspection.id })).status, 202);
   assert.equal((await call('run', 'POST', { id: inspection.id })).status, 400);
   await app.jobs.done;
-  assert.equal(app.jobs.current.status, 'succeeded', app.jobs.current.error);
-  assert.deepEqual(app.jobs.current.progress, {
+  for (const job of app.jobs.list) assert.equal(job.status, 'succeeded', job.error);
+  assert.deepEqual(Object.fromEntries(app.jobs.list.map(job => [job.inspector, job.progress])), {
     code: { status: 'done', completed: 1, total: 1 },
     git: { status: 'done', completed: 1, total: 1 },
   });
-  assert.doesNotMatch(app.jobs.current.log, /CODE_VIEW_PROGRESS/);
+  for (const job of app.jobs.list) assert.doesNotMatch(job.log, /CODE_VIEW_PROGRESS/);
   const state = (await call('state')).value;
   assert.equal(state.inspections[0].hasResults, true);
   const rendered = await call(`treemap?inspection=${inspection.id}&preset=${state.presets[0].id}`);
@@ -158,18 +158,18 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   const renamed = await call(`treemap?inspection=${inspection.id}&preset=${state.presets[0].id}`);
   assert.equal(renamed.value.ok, true);
   assert.match(renamed.value.treeMapHtml, /"name":"Canonical Test","email":"canonical@example.test","commits":1/);
-  const before = await readFile(app.jobs.path(inspection.id));
+  const before = await readFile(app.jobs.analysis(app.store.get().inspections[0]));
   // A bad rerun must never publish a partial database over usable results.
   await call(`inspections/${inspection.id}`, 'PUT', { ...config, tsconfig: 'missing.json' });
   assert.equal((await call('state')).value.inspections[0].stale, true);
-  await call('run', 'POST', { id: inspection.id }); await app.jobs.done;
-  assert.equal(app.jobs.current.status, 'failed');
-  assert.deepEqual(await readFile(app.jobs.path(inspection.id)), before);
+  await call('run', 'POST', { id: inspection.id, inspector: 'code' }); await app.jobs.done;
+  assert.equal(app.jobs.list.find(job => job.inspector === 'code').status, 'failed');
+  assert.deepEqual(await readFile(app.jobs.analysis(app.store.get().inspections[0])), before);
   await call(`inspections/${inspection.id}`, 'PUT', config);
-  await call('run', 'POST', { id: inspection.id });
-  await call('cancel', 'POST', {}); await app.jobs.done;
-  assert.equal(app.jobs.current.status, 'cancelled');
-  assert.deepEqual(await readFile(app.jobs.path(inspection.id)), before);
+  await call('run', 'POST', { id: inspection.id, inspector: 'code' });
+  await call('cancel', 'POST', { id: inspection.id, inspector: 'code' }); await app.jobs.done;
+  assert.equal(app.jobs.list.find(job => job.inspector === 'code').status, 'cancelled');
+  assert.deepEqual(await readFile(app.jobs.analysis(app.store.get().inspections[0])), before);
   const persisted = (await openStore(data)).get();
   assert.equal(persisted.selection.inspection, inspection.id);
 });
