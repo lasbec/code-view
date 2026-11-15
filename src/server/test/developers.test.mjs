@@ -55,3 +55,46 @@ test('attribution merges aliases, counts unique commits, keeps raw activity sepa
   assert.equal(developerData(path,files,preset,identities,{since:'2026-01-02'}).developers.length,1);
   assert.equal(developerData(path,files,{...preset,config:{...preset.config,merges:'only'}},identities).developers[0].name,'Merge');
 });
+
+test('size weighting and strict authorship thresholds preserve activity and optionally renormalize survivors',t=>{
+  const dir=mkdtempSync(join(tmpdir(),'developer-threshold-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const path=join(dir,'test.sqlite'),db=new DatabaseSync(path);
+  db.exec(`CREATE TABLE git_commits(repository_id,hash,author_name,author_email,committed_at,is_merge);
+    CREATE TABLE git_file_changes(repository_id,commit_hash,path,lines_created,lines_removed,lines_changed);
+    INSERT INTO git_commits VALUES(1,'a','A','a','2026-01-01',0),(1,'b','B','b','2026-01-02',0),(1,'c','C','c','2026-01-03',0);
+    INSERT INTO git_file_changes VALUES(1,'a','a.ts',80,0,0),(1,'b','a.ts',15,0,0),(1,'c','a.ts',5,0,0);`);db.close();
+  const files=[{path:'a.ts',score:10,size_bytes:100,total_lines:20,effective_lines:5}];
+  const run=(config={},options={})=>developerData(path,files,{name:'Test',config:{...defaultDeveloperPreset().config,...config}},[],options);
+  const author=(result,id)=>result.developers.find(p=>p.id===id);
+  assert.equal(defaultDeveloperPreset().config.authorshipThreshold,2);
+  for(const [sizeWeighting,factor] of [['none',1],['size_bytes',100],['total_lines',20],['effective_lines',5]]) {
+    const a=author(run({sizeWeighting,authorshipThreshold:5}),'a');
+    assert.equal(a.files[0].contribution,8*factor);assert.equal(a.score,10*factor);
+  }
+  const filtered=run({authorshipThreshold:5});
+  assert.equal(author(filtered,'c').files.length,0);
+  assert.equal(author(filtered,'c').commits.length,1);assert.equal(author(filtered,'c').totals.created,5);
+  assert.equal(author(filtered,'a').files[0].weight,.8);
+  const scaled=run({authorshipThreshold:5,renormalizeAuthorship:true});
+  assert.equal(author(scaled,'a').files[0].weight,80/95);
+  assert.equal(author(scaled,'b').files[0].weight,15/95);
+  for(const config of [{authorshipThreshold:100,renormalizeAuthorship:true},{authorshipThreshold:80,attribution:'winner'}]) {
+    assert.ok(run(config).developers.every(p=>p.files.length===0 && p.score===null));
+  }
+  assert.equal(author(run({attribution:'winner'}),'a').files[0].weight,1);
+  assert.equal(author(run({authorshipThreshold:100},{applyAuthorshipThreshold:false}),'c').files.length,1);
+  // Shared treemap/detail authorship stays unfiltered.
+  assert.equal(filtered.authorship['a.ts'].authors.length,3);
+  for(const size of [0,undefined]) {
+    files[0].size_bytes=size;
+    const a=author(run({sizeWeighting:'size_bytes'}),'a');
+    assert.equal(a.files[0].contribution,size===0?0:null);assert.equal(a.score,size===0?0:null);
+  }
+  files[0].effective_lines=0;
+  assert.equal(author(run({normalization:'lines',sizeWeighting:'effective_lines'}),'a').score,null);
+  for(const config of [{authorshipThreshold:-1},{authorshipThreshold:101},{authorshipThreshold:NaN},{renormalizeAuthorship:1},{sizeWeighting:'bad'}]) {
+    assert.throws(()=>validateDeveloperPreset({name:'Bad',config:{...defaultDeveloperPreset().config,...config}}));
+  }
+  const legacy=defaultDeveloperPreset();delete legacy.config.sizeWeighting;delete legacy.config.authorshipThreshold;delete legacy.config.renormalizeAuthorship;
+  assert.equal(validateDeveloperPreset(legacy).config.authorshipThreshold,2);
+});

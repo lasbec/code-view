@@ -2,15 +2,16 @@ import { DatabaseSync } from 'node:sqlite';
 import { normalizeAuthorEmail } from '../treemap/src/authors.mjs';
 import { aggregate } from '../treemap/src/scoring.mjs';
 
-export const defaultDeveloperPreset = () => ({ name: 'Developers', config: { aggregation: 'average', quantile: 90, normalization: 'none', attribution: 'proportional', basis: 'churn', merges: 'exclude', created: 1, deleted: 1, changed: 1 } });
+export const defaultDeveloperPreset = () => ({ name: 'Developers', config: { aggregation: 'average', quantile: 90, normalization: 'none', sizeWeighting: 'none', authorshipThreshold: 2, renormalizeAuthorship: false, attribution: 'proportional', basis: 'churn', merges: 'exclude', created: 1, deleted: 1, changed: 1 } });
 export function validateDeveloperPreset(value) {
   const fail = () => { throw Object.assign(new Error('Invalid developer preset.'), { status: 400 }); };
   if (!value || typeof value.name !== 'string' || !value.name.trim()) fail();
-  const c = value.config;
-  if (!c || typeof c !== 'object') fail();
-  for (const [k, values] of Object.entries({ aggregation: ['sum','average','max','median','quantile'], normalization: ['none','lines','scale'], attribution: ['winner','proportional'], basis: ['commits','churn'], merges: ['exclude','only','include'] })) if (!values.includes(c[k])) fail();
+  const { sizeWeighting, authorshipThreshold, renormalizeAuthorship } = defaultDeveloperPreset().config;
+  const c = { sizeWeighting, authorshipThreshold, renormalizeAuthorship, ...value.config };
+  if (!value.config || typeof value.config !== 'object' || Array.isArray(value.config)) fail();
+  for (const [k, values] of Object.entries({ aggregation: ['sum','average','max','median','quantile'], normalization: ['none','lines','scale'], sizeWeighting: ['none','size_bytes','total_lines','effective_lines'], attribution: ['winner','proportional'], basis: ['commits','churn'], merges: ['exclude','only','include'] })) if (!values.includes(c[k])) fail();
   for (const k of ['created','deleted','changed','quantile']) if (!Number.isFinite(c[k]) || c[k] < 0) fail();
-  if (c.quantile > 100) fail();
+  if (c.quantile > 100 || !Number.isFinite(c.authorshipThreshold) || c.authorshipThreshold < 0 || c.authorshipThreshold > 100 || typeof c.renormalizeAuthorship !== 'boolean') fail();
   return { name: value.name.trim(), config: Object.fromEntries(Object.keys(defaultDeveloperPreset().config).map(k => [k,c[k]])) };
 }
 export function authorColor(id) {
@@ -19,7 +20,10 @@ export function authorColor(id) {
   return `hsl(${(hash >>> 0) % 360} 58% 65%)`;
 }
 export function aggregateDeveloper(values, config) {
-  const entries = values.filter(v => v.weight > 0 && Number.isFinite(v.score));
+  const entries = values.map(v => {
+    const factor = v.sizeFactor === undefined ? 1 : v.sizeFactor;
+    return { ...v, score: Number.isFinite(v.score) && Number.isFinite(factor) ? v.score * factor : null };
+  }).filter(v => v.weight > 0 && Number.isFinite(v.score));
   if (!entries.length) return null;
   if (config.aggregation === 'quantile') return aggregate(entries.map(v => v.score*v.weight), 'quantile', config.quantile);
   const sum = entries.reduce((s,v) => s + v.score*v.weight, 0);
@@ -35,7 +39,7 @@ export function aggregateDeveloper(values, config) {
 export function developerData(path, files, preset, identities = [], options = {}) {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
-    const config = preset.config, aliases = new Map(), people = new Map(), fileAuthors = new Map();
+    const config = { ...defaultDeveloperPreset().config, ...preset.config }, aliases = new Map(), people = new Map(), fileAuthors = new Map();
     for (const identity of identities) for (const email of [identity.email,...identity.aliases ?? []]) aliases.set(normalizeAuthorEmail(email),identity);
     if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='git_commits'").get()) return { developers: [], mainAuthors: {}, authorship: {}, available: false };
     const columns = db.prepare('PRAGMA table_info(git_file_changes)').all();
@@ -73,9 +77,13 @@ export function developerData(path, files, preset, identities = [], options = {}
       let score = file.score;
       if (config.normalization === 'lines') score = file.effective_lines > 0 && score !== null ? score/file.effective_lines : null;
       if (config.normalization === 'scale' && score !== null) score = max > 0 ? score/max*100 : 0;
-      for (const a of values) {
-        const weight = config.attribution === 'winner' ? Number(a === winner) : a.value/total;
-        people.get(a.id).files.push({ path, function_count: file.function_count ?? null, rawScore: file.score, score, weight, contribution: score === null ? null : score*weight, fallback });
+      const qualified = options.applyAuthorshipThreshold === false ? values : values.filter(a => a.value / total * 100 > config.authorshipThreshold);
+      const denominator = config.renormalizeAuthorship && options.applyAuthorshipThreshold !== false ? qualified.reduce((sum,a) => sum+a.value,0) : total;
+      const sizeFactor = config.sizeWeighting === 'none' ? 1 : file[config.sizeWeighting];
+      for (const a of qualified) {
+        if (config.attribution === 'winner' && a !== winner) continue;
+        const weight = config.attribution === 'winner' ? Number(a === winner) : a.value/denominator;
+        people.get(a.id).files.push({ path, function_count: file.function_count ?? null, rawScore: file.score, score, weight, sizeFactor: Number.isFinite(sizeFactor) ? sizeFactor : null, contribution: Number.isFinite(score) && Number.isFinite(sizeFactor) && Number.isFinite(score*weight*sizeFactor) ? score*weight*sizeFactor : null, fallback });
       }
     }
     const developers = [...people.values()].map(person => {

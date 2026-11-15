@@ -44,6 +44,22 @@ Missing measurement values inside collections remain null. Function scores sum
 function fields; file scores sum each field's independent function aggregation
 and the file fields. Files without functions pass `[]` to aggregations.
 
+Two external incoming-reference metrics complement Incoming references:
+
+- Function fields: `metrics.code_function_references_incoming_external_count.length`
+  counts reference occurrences from other files;
+  `metrics.code_function_references_incoming_external_file_count.length` counts
+  distinct other source files referencing that function.
+- File fields: `metrics.incoming_external_count` and
+  `metrics.incoming_external_file_count` provide the corresponding file totals.
+  The latter deduplicates source files across all target functions in the file.
+  Summing function-level distinct counts can count a source file repeatedly;
+  use the file metric when each referencing file should count once.
+
+Unresolved targets and same-file references are excluded. Sources outside the
+selected path filter still count. These values use existing inspection data;
+no new inspection is needed. The metrics are also available as treemap areas.
+
 Expressions and function bodies with `return` are supported. Lodash is available
 as `_` and through direct functions such as `sum`, `max`, `mean`, `map`, `sumBy`,
 `clamp` and `round`. Aggregations receive only `scores`, never file/function metrics.

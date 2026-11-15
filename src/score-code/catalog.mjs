@@ -46,6 +46,12 @@ for (const [field, label, description] of [
 count('code_calls', 'Call sites', 'Calls and constructor sites, including module scope and unresolved calls.');
 count('code_function_references', 'Function references', 'Recorded function uses, including calls, arguments, assignments and returns.');
 add('code_function_references', 'incoming_count', 'Incoming references', 'Reference sites targeting this function, or functions in this file, including calls, arguments, assignments and returns. Counts occurrences, including self-references; unresolved targets are excluded.', { aggregation: 'count', aggregations: ['count'], counter: true });
+for (const table of ['code_function_references', 'code_files']) {
+  for (const [field, label, description] of [
+    ['incoming_external_count', 'Incoming references from other files', 'Reference occurrences from other files targeting this function or functions in this file. Includes sources outside path filters; unresolved targets are excluded.'],
+    ['incoming_external_file_count', 'Distinct referencing files', 'Distinct other source files referencing this function or functions in this file. Each source file counts once per target, including sources outside path filters.'],
+  ]) add(table, field, label, description, table === 'code_files' ? {} : { aggregation: 'count', aggregations: ['count'], counter: true });
+}
 count('code_diagnostics', 'Compiler diagnostics', 'Semantic diagnostics associated with inspected files; not runtime failures.');
 count('git_file_changes', 'Git file changes', 'File-change events, including merge diffs against the first parent. Renames are not followed.');
 add('git_file_changes', 'churn', 'Code churn', 'Added plus deleted lines across imported file changes. Replacing a line counts twice. Includes root commits and merge diffs against the first parent; binary changes have no line count.');

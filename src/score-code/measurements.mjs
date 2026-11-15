@@ -81,6 +81,20 @@ export function sources(db, options) {
     const columns = new Set(rows(db, `PRAGMA table_info(${quote(source.table)})`).map(column => column.name));
     for (const entry of metricById.values()) {
       const [table, field] = entry.metric.split('.');
+      if (table === source.table && ['incoming_external_count', 'incoming_external_file_count'].includes(field)) {
+        if (!tables.has('code_function_references')) continue;
+        const distinct = field === 'incoming_external_file_count';
+        if (table === 'code_files') {
+          catalog.set(entry.metric, { ...entry, ...source,
+            from: `${source.from} LEFT JOIN (SELECT target.file_id AS target_file, COUNT(${distinct ? 'DISTINCT ref.file_id' : '*'}) AS reference_count FROM code_function_references ref JOIN code_functions target ON target.id=ref.target_id WHERE ref.file_id<>target.file_id GROUP BY target.file_id) incoming ON incoming.target_file=t.id`,
+            expression: 'COALESCE(incoming.reference_count,0)' });
+        } else {
+          catalog.set(entry.metric, { ...entry, ...source, file: 'target.file_id',
+            from: `${distinct ? '(SELECT DISTINCT target_id,file_id FROM code_function_references)' : 'code_function_references'} t JOIN code_functions target ON target.id=t.target_id AND t.file_id<>target.file_id`,
+            functionOwner: 't.target_id', expression: '1' });
+        }
+        continue;
+      }
       if (table === source.table && field === 'incoming_count') {
         catalog.set(entry.metric, { ...entry, ...source, file: 'target.file_id',
           from: `${source.from} JOIN code_functions target ON target.id=t.target_id`,

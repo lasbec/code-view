@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { calculateScores } from './calculate.mjs';
 
-export const computationVersion = 2;
+export const computationVersion = 3;
 export function scoreKey(definition, filter) {
   return createHash('sha256').update(JSON.stringify({ version: computationVersion, definition, filter })).digest('hex');
 }

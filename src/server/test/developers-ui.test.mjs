@@ -47,8 +47,14 @@ test('developer sidebar saves weights, table searches and details show raw commi
   assert.equal(calls.filter(c=>c.path.startsWith('developers?')).length,reads);
   host.querySelector('[data-person]').click();assert.match(host.querySelector('[data-detail]').textContent,/abc123/);
   const search=host.querySelector('[data-search]');search.value='nobody';search.dispatchEvent(new dom.window.Event('input'));assert.equal(host.querySelectorAll('tbody tr').length,0);
+  host.querySelector('[name="sizeWeighting"]').value='effective_lines';
+  assert.equal(host.querySelector('[name="authorshipThreshold"]').value,'2');
+  assert.equal(host.querySelector('[name="renormalizeAuthorship"]').checked,false);
+  host.querySelector('[name="authorshipThreshold"]').value='5.5';
+  host.querySelector('[name="renormalizeAuthorship"]').checked=true;
   host.querySelector('[name="changed"]').value='3';host.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true,bubbles:true}));await settle();
   const saved=calls.find(c=>c.method==='PUT');assert.equal(saved.path,'developerPresets/d');assert.equal(saved.value.config.changed,3);assert.equal(saved.value.config.aggregation,'average');
+  assert.equal(saved.value.config.sizeWeighting,'effective_lines');assert.equal(saved.value.config.authorshipThreshold,5.5);assert.equal(saved.value.config.renormalizeAuthorship,true);
 });
 
 test('boxplot excludes unowned and invalid files, retains zero, and interpolates quartiles',async()=>{

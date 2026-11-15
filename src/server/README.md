@@ -225,6 +225,25 @@ to commit shares and are marked. This describes contact with currently scored
 files, not the quality impact of individual developers. Historical renames are
 not followed. Merge contributions are diffs against the first parent.
 
+Developer presets also select a contribution size factor: None (default, 1),
+Byte size, Total lines (including comments and blanks), or Effective lines of code.
+Contribution is normalized file score × author share × size factor. All developer
+contribution statistics and aggregate scores use the size-weighted score; raw and
+normalized file scores and Git activity stay unchanged. Zero size produces zero
+contribution; missing size produces no contribution. Combining per-code-line
+normalization with effective-code-line weighting cancels on files with code;
+zero-code-line files still have no per-line score.
+
+The authorship threshold defaults to 2%, including for presets that omit this
+setting. An author's original share per file must be strictly above the threshold
+to receive an attributed file and contribution. The optional “Renormalize remaining
+authorship to 100%” checkbox (off by default) rescales surviving shares after
+filtering. Otherwise surviving shares retain their original values. If no author
+qualifies, the file has no attributed contribution. Winner attribution checks the
+winner's original share before assigning 100%. Thresholds only affect Developers;
+Treemap and inspector authorship remain unchanged. Commits, line statistics and
+developer rows remain visible even when all attributed files are excluded.
+
 Developer details show attributed file scores and individual commits. Created,
 deleted and changed totals and averages per distinct commit remain unweighted;
 only commits touching inspected current file paths count, including deletion-only

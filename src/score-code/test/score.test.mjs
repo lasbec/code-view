@@ -92,3 +92,23 @@ test('counter and scalar queries do not multiply values through joins', t => {
   assert.equal(result.functions.find(f=>f.id==='a1').score,5);
   assert.equal(result.files[0].score,13);
 });
+
+test('external reference metrics count occurrences and deduplicate source files at each target scope', t => {
+  const {db}=fixture(t);t.after(()=>db.close());
+  db.exec(`CREATE TABLE code_function_references(function_id TEXT,target_id TEXT,file_id TEXT);
+    INSERT INTO code_function_references VALUES
+    ('b1','a1','b.ts'),('b1','a1','b.ts'),('b1','a2','b.ts'),
+    (NULL,'a1','outside.ts'),('a1','a1','a.ts'),('a1','a2','a.ts'),
+    ('b1','unresolved','b.ts');`);
+  for (const [field, functionScores, fileScore] of [
+    ['incoming_external_count',[3,1],4],
+    ['incoming_external_file_count',[2,1],2],
+  ]) {
+    const result=calculateScores(db,{fields:[
+      {id:'functions',kind:'function',code:`metrics.code_function_references_${field}.length`,aggregation:'0'},
+      {id:'file',kind:'file',code:`metrics.${field}`},
+    ]},{include:['a.ts']});
+    assert.deepEqual(result.functions.map(fn=>fn.score),functionScores);
+    assert.equal(result.files[0].score,fileScore);
+  }
+});
