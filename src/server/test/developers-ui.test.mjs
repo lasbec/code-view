@@ -8,7 +8,7 @@ test('developer sidebar saves weights, table searches and details show raw commi
   const bundle=await build({entryPoints:[new URL('../public/developers-view.js',import.meta.url).pathname],bundle:true,format:'iife',globalName:'Developers',write:false});
   const dom=new JSDOM('<main id="host"></main>',{runScripts:'outside-only'});t.after(()=>dom.window.close());dom.window.eval(bundle.outputFiles[0].text);
   const host=dom.window.document.querySelector('#host');
-  const state={selection:{},inspections:[{id:'i',name:'Repo',hasResults:true}],presets:[{id:'s',name:'Score'}],developerPresets:[{id:'d',...defaultDeveloperPreset()}]};
+  const state={selection:{},filters:[{id:'filter',name:'All'}],inspections:[{id:'i',name:'Repo',hasResults:true}],presets:[{id:'s',name:'Score'}],developerPresets:[{id:'d',...defaultDeveloperPreset()}]};
   const person={id:'a@example.com',name:'Alice <unsafe>',color:'hsl(20 58% 65%)',score:50,totals:{created:4,deleted:2,changed:3},perCommit:{created:4,deleted:2,changed:3},files:[{path:'a.ts',function_count:0,rawScore:50,score:50,weight:1,contribution:50}],commits:[{hash:'abc123',date:'2026-01-01',created:4,deleted:2,changed:3}]};
   person.files.push(...[0,100].map(contribution=>({path:`${contribution}.ts`,function_count:1,rawScore:contribution,score:contribution,weight:1,contribution})));
   const calls=[],api=async(path,method,value)=>{calls.push({path,method,value});if(path==='state')return state;if(path.startsWith('developers?'))return {available:true,developers:[person]};return {};};
@@ -69,7 +69,7 @@ test('plots sort by contribution median and keep a shared scale across search an
   const bundle=await build({entryPoints:[new URL('../public/developers-view.js',import.meta.url).pathname],bundle:true,format:'iife',globalName:'Developers',write:false});
   const dom=new JSDOM('<main id="host"></main>',{runScripts:'outside-only'});t.after(()=>dom.window.close());dom.window.eval(bundle.outputFiles[0].text);
   const host=dom.window.document.querySelector('#host');
-  const state={selection:{},inspections:[{id:'i',name:'Repo',hasResults:true}],presets:[{id:'s',name:'Score'}],developerPresets:[{id:'d',...defaultDeveloperPreset()}]};
+  const state={selection:{},filters:[{id:'filter',name:'All'}],inspections:[{id:'i',name:'Repo',hasResults:true}],presets:[{id:'s',name:'Score'}],developerPresets:[{id:'d',...defaultDeveloperPreset()}]};
   const people=Array.from({length:102},(_,i)=>({id:`dev${i}@example.com`,name:`Dev ${i}`,color:'blue',score:1000-i,totals:{created:0,deleted:0,changed:0},perCommit:{created:0,deleted:0,changed:0},files:[{weight:1,contribution:i}],commits:[]}));
   people.push({...people[0],id:'empty',name:'Empty',files:[]});
   const api=async()=>({available:true,developers:people});

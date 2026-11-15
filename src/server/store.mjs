@@ -3,10 +3,13 @@ import { defaultGraphPreset } from './graph-config.mjs';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { resolve, isAbsolute, relative, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { validateConfig } from '../treemap/src/scoring.mjs';
+import { validateDefinition, defaultDefinition } from '../score-code/config.mjs';
+import { validateDisplay } from '../treemap/src/display.mjs';
 import { normalizeAuthorIdentities } from '../treemap/src/authors.mjs';
 
-export const defaultPreset = () => ({ name: 'Complexity', config: { area: 'code_files.effective_lines', operation: 'sum', scores: [{ name: 'Complexity', normalize: true, metrics: [{ metric: 'code_functions.cyclomatic_complexity', min: 10, aggregation: 'sum', factor: 1 }] }] }, options: { include: [], exclude: [] } });
+export const defaultPreset = () => ({ name: 'Complexity', config: defaultDefinition() });
+export const defaultFilter = () => ({ name: 'All files · all history', options: { include: [], exclude: [] } });
+export const defaultTreemap = () => ({ name: 'Code size · automatic heat', config: { area: 'code_files.effective_lines', functionArea: 'code_functions.exclusive_size_bytes', heat: {} } });
 export function check(condition, message) { if (!condition) throw Object.assign(new Error(message), { status: 400 }); }
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 function patterns(value = []) { check(Array.isArray(value) && value.every(p => typeof p === 'string' && p.length > 0), 'Patterns must be nonempty strings.'); return value; }
@@ -23,15 +26,25 @@ export function validateInspection(value) {
   catch (error) { check(false, error.message); }
   return { name: value.name.trim(), repository, tsconfig, commits: value.commits ?? null, include: patterns(value.include), exclude: patterns(value.exclude), authorIdentities };
 }
+function named(value) { check(object(value) && typeof value.name === 'string' && value.name.trim(), 'A preset name is required.'); }
 export function validatePreset(value) {
-  check(object(value) && typeof value.name === 'string' && value.name.trim(), 'A preset name is required.');
-  const c = value.config;
-  try { validateConfig(c); } catch (error) { check(false, error.message); }
+  named(value);
+  try { return { name: value.name.trim(), config: validateDefinition(value.config) }; }
+  catch (error) { check(false, error.message); }
+}
+export function validateFilter(value) {
+  named(value);
   const o = value.options ?? {};
-  check(object(o) && Object.keys(o).every(k => ['include', 'exclude', 'since', 'until'].includes(k)), 'Invalid treemap filters.');
+  check(object(o) && Object.keys(o).every(k => ['include', 'exclude', 'since', 'until'].includes(k)), 'Invalid filters.');
   for (const k of ['since', 'until']) check(o[k] === undefined || typeof o[k] === 'string' && Number.isFinite(Date.parse(o[k])), 'Dates must be valid ISO timestamps.');
   check(!o.since || !o.until || Date.parse(o.since) <= Date.parse(o.until), 'Since must precede until.');
-  return { name: value.name.trim(), config: c, options: { ...o, include: patterns(o.include), exclude: patterns(o.exclude) } };
+  return { name: value.name.trim(), options: { ...o, include: patterns(o.include), exclude: patterns(o.exclude) } };
+}
+export function validateTreemap(value) {
+  named(value);
+  check(object(value.config) && Object.keys(value.config).every(k => ['area','functionArea','heat'].includes(k)), 'Invalid treemap settings.');
+  try { return { name: value.name.trim(), config: validateDisplay(value.config) }; }
+  catch (error) { check(false, error.message); }
 }
 export async function openStore(directory) {
   await mkdir(directory, { recursive: true });
@@ -39,42 +52,16 @@ export async function openStore(directory) {
   let state;
   try { state = JSON.parse(await readFile(file, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; state = { inspections: [], presets: [{ id: randomUUID(), ...defaultPreset() }], selection: {} }; }
-  // Old presets are deliberately discarded, not translated to new semantics.
-  // Keep repository configuration, result metadata and inspection selection intact.
-  if (state.presetSchema !== 2) {
-    state.presets = [{ id: randomUUID(), ...defaultPreset() }];
-    state.selection.preset = state.presets[0].id;
-    state.presetSchema = 2;
-    await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
-    await rename(`${file}.tmp`, file);
+  state.selection ??= {};
+  for (const [collection, defaults] of [['presets', defaultPreset], ['filters', defaultFilter], ['treemaps', defaultTreemap], ['graphPresets', defaultGraphPreset], ['developerPresets', defaultDeveloperPreset]]) {
+    state[collection] ??= [{ id: randomUUID(), ...defaults() }];
   }
-  if (!state.graphPresets) {
-    state.graphPresets = [{ id: randomUUID(), ...defaultGraphPreset() }];
-    await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
-    await rename(`${file}.tmp`, file);
+  for (const [key, collection] of [['inspection','inspections'],['preset','presets'],['filter','filters'],['treemap','treemaps'],['graphPreset','graphPresets'],['developerPreset','developerPresets']]) {
+    if (state.selection[key] === undefined && state[collection].length) state.selection[key] = state[collection][0].id;
   }
-  if (!state.developerPresets) {
-    state.developerPresets = [{ id: randomUUID(), ...defaultDeveloperPreset() }];
-    await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
-    await rename(`${file}.tmp`, file);
-  }
+  await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
+  await rename(`${file}.tmp`, file);
   let queue = Promise.resolve();
-  // Preserve saved configurations that used the temporary minimum-depth metric.
-  let migratedDepth = false;
-  for (const preset of state.presets) {
-    const migrate = id => {
-      if (id !== 'code_functions.minimum_call_depth') return id;
-      migratedDepth = true;
-      return 'code_functions.down_call_depth';
-    };
-    const config = preset.config;
-    for (const field of ['area', 'functionArea']) if (config[field]) config[field] = migrate(config[field]);
-    for (const score of config.scores) for (const term of score.metrics) term.metric = migrate(term.metric);
-  }
-  if (migratedDepth) {
-    await writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
-    await rename(`${file}.tmp`, file);
-  }
   return {
     get: () => structuredClone(state),
     update(change) {

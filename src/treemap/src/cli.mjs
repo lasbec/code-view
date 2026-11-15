@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createScoreWorker } from '../../score-code/worker-client.mjs';
 import { parseArgs } from 'node:util';
 import { readFile, writeFile, mkdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -20,7 +21,7 @@ export async function main(args = process.argv.slice(2)) {
     'list-metrics': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
   } });
   if (values.help) {
-    console.log('Usage: node src/cli.mjs --input analysis.sqlite --output report.html --config scores.json\nAlternative: --config-json \'{"scores":[{"metrics":[{"metric":"code_functions.count"}]}]}\'\nOptional: --include GLOB --exclude GLOB (repeatable), --repository PATH_OR_ID, --code-prefix PATH, --since ISO_DATE, --until ISO_DATE, --author-identities identities.json, --show-functions\nList metrics: --input analysis.sqlite --list-metrics\nWrites the treemap and derived report.warnings.html snippets.');
+    console.log('Usage: node src/cli.mjs --input analysis.sqlite --output report.html --config scores.json\nAlternative: --config-json \'{"fields":[{"kind":"function","code":"metrics.cyclomatic_complexity","aggregation":"sum(scores)"}]}\'\nOptional: --include GLOB --exclude GLOB (repeatable), --repository PATH_OR_ID, --code-prefix PATH, --since ISO_DATE, --until ISO_DATE, --author-identities identities.json, --show-functions\nList metrics: --input analysis.sqlite --list-metrics\nWrites the treemap and derived report.warnings.html snippets.');
     return { ok: true };
   }
   if (!values.input) throw new Error('--input ist erforderlich.');
@@ -50,7 +51,13 @@ export async function main(args = process.argv.slice(2)) {
     if (Boolean(values.config) === Boolean(values['config-json'])) throw new Error('Genau eine Option --config oder --config-json angeben.');
     const config = JSON.parse(values.config ? await readFile(values.config, 'utf8') : values['config-json']);
     if (values['author-identities']) options.authorIdentities = JSON.parse(await readFile(values['author-identities'], 'utf8'));
-    result = await calculateTreeMap(await readFile(values.input), config, options);
+    const worker = createScoreWorker();
+    try {
+      const filter = Object.fromEntries(['include','exclude','since','until','repository','codePrefix'].filter(k => options[k] !== undefined).map(k => [k,options[k]]));
+      const scoreData = await worker.request({ path: values.input, definition: { fields: config.fields }, filter });
+      if (scoreData.error) throw new Error(scoreData.error);
+      result = await calculateTreeMap(await readFile(values.input), config, { ...options, scoreData });
+    } finally { await worker.close(); }
   } catch (error) {
     result = { ok: false, diagnostics: [{ severity: 'error', code: 'input-failed', message: `Treemap konnte nicht erstellt werden: ${error.message}` }] };
   }

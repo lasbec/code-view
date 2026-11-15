@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { defaultPreset } from '../store.mjs';
+import { defaultPreset, defaultFilter, defaultTreemap } from '../store.mjs';
 const require = createRequire(new URL('../../treemap/package.json', import.meta.url));
 const { JSDOM } = require('jsdom');
 const { build } = require('esbuild');
@@ -21,7 +21,7 @@ async function page(t, { saved, blocked = false } = {}) {
   window.eval(doc.querySelector('head script').textContent);
   const initialTheme = doc.documentElement.dataset.theme;
   const requests = [];
-  const state = { inspections: [{ id: 'repo', name: 'Repo', hasResults: true }], presets: [{ id: 'preset', ...defaultPreset() }], selection: { inspection: 'repo', preset: 'preset' } };
+  const state = { inspections: [{ id: 'repo', name: 'Repo', hasResults: true }], presets: [{ id: 'preset', ...defaultPreset() }], filters: [{id:'filter',...defaultFilter()}], treemaps: [{id:'treemap',...defaultTreemap()}], selection: { inspection: 'repo', preset: 'preset' } };
   window.fetch = async (path, options) => {
     requests.push({ path, options });
     return { ok: true, json: async () => path === '/api/state' ? structuredClone(state) : { metrics: [], treeMapHtml: '<p>Map</p>', treeMapWarningsHtml: '' } };

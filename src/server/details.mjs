@@ -3,7 +3,6 @@ import { readFile, realpath } from 'node:fs/promises';
 import { resolve, dirname, relative, sep } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { aggregate } from '../treemap/src/scoring.mjs';
 const exec = promisify(execFile);
 export async function inspectDetail(path, config, id, kind, model, expanded) {
   const db = new DatabaseSync(path, { readOnly: true });
@@ -25,17 +24,13 @@ export async function inspectDetail(path, config, id, kind, model, expanded) {
     const nodes = new Map();
     for (const f of expanded?.files ?? []) for (const item of [f, ...(f.children ?? [])]) {
       if (item.kind === 'outside') continue;
-      for (const score of item.scores ?? []) {
-        const context = model.files[0]?.scores.find(s => s.groupIndex === score.groupIndex);
-        if (context) { score.max = context.max; score.capped = Math.min(score.raw, context.max); score.value = score.normalize ? (score.max ? score.capped / score.max * 100 : 0) : score.capped; }
-      }
-      item.heat = item.scores?.length ? aggregate(item.scores.map(s => s.value), config.preset.config.operation ?? 'sum', config.preset.config.quantile) : null;
       nodes.set(item.id, item);
     }
     for (const f of model.files) { nodes.set(f.id, f); for (const fn of f.children ?? []) nodes.set(fn.id, fn); }
     const node = nodes.get(id);
     const metadata = Object.fromEntries(query('code_metadata', 'SELECT * FROM code_metadata').map(r => [r.key, r.value]));
-    const warnings = [];
+    const warnings = node?.error ? [node.error] : [];
+    if (!node) warnings.push('This item is outside the selected score/filter population.');
     let source = null, sourcePath = null;
     try {
       const repository = await realpath(config.repository);

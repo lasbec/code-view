@@ -1,31 +1,29 @@
-import { metricCatalog } from '../../treemap/src/catalog.mjs';
-export const metricHelp = metricCatalog.map(entry => ({
-  ...entry, short: entry.description,
-  long: `${entry.description} Default file aggregation: ${entry.aggregation}. Numeric measurements contribute only their excess above the threshold before file aggregation. Counts count qualifying events. Git metrics use imported history and commit-time filters; source metrics describe static sites, not executions.`,
-  example: entry.counter ? 'With threshold 0, three associated events give count 3. No events give 0.' : 'Measurements 5, 12 and 20 with threshold 10 contribute 2 and 10: sum 12, maximum 10, count 2, or median 6.',
-}));
+import { formulaMetrics } from '../../score-code/catalog.mjs';
+export const metricHelp = formulaMetrics.map(entry => ({ ...entry, short: entry.description, long: `${entry.description} JavaScript type: ${entry.type}.`, example: entry.type.startsWith('number') ? `metrics.${entry.key} ?? 0` : `sum(metrics.${entry.key} ?? [])` }));
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const examples = [
+  ['Function complexity', 'metrics.cyclomatic_complexity'],
+  ['Weighted excess', 'Math.max(0, metrics.cyclomatic_complexity - 10) * 2'],
+  ['Function events', 'sum(metrics.code_accesses_mutations)'],
+  ['Missing measurements', 'metrics.reachable_internal_count ?? 0'],
+  ['Multi-line function formula', 'const depth = metrics.down_call_depth;\nreturn depth > 10 ? depth * 2 : 0;'],
+  ['File code metric', 'metrics.effective_lines / Math.max(1, metrics.total_lines)'],
+  ['File Git metric', 'sum(metrics.git_file_changes_churn)'],
+  ['File aggregation', 'sum(scores)'],
+  ['Maximum; files without functions give 0', 'max(scores) ?? 0'],
+  ['Mean; files without functions give 0', 'scores.length ? mean(scores) : 0'],
+];
 export function metricHelpHtml() {
-  return `<div class="metric-help"><div class="help-toolbar"><h1>Help</h1><label class="help-search" for="metric-help-search">Search metrics<input id="metric-help-search" type="search" placeholder="Name, description or example" aria-controls="metric-help-list"></label><span id="metric-help-count" class="hint" role="status">${metricHelp.length} metrics</span></div>
-    <details class="metric-guide"><summary>How metrics become a treemap</summary>
-    <p>For each contribution: keep individual measurements strictly above the threshold, subtract the threshold, aggregate per file, then multiply by the weight. Contributions within a group are added.</p>
-    <p>Choose sum, minimum, maximum, quantile or count for numeric measurements. Event counters count qualifying rows. Empty sets give 0. Quantiles use linear interpolation on sorted values: 0 is minimum, 50 median, 100 maximum.</p>
-    <p>Each group is capped at its upper limit, even without normalization. A blank limit uses the largest raw group score among displayed files. Optional normalization divides the capped score by that limit and multiplies by 100. An all-zero group stays 0.</p>
-    <p>Combine groups using sum, quantile, minimum, maximum or product. The result is not normalized again: two normalized groups can sum to 200 or multiply to 10,000. An explicit legend maximum takes precedence; otherwise the largest displayed final score is used.</p>
-    <p>Area uses the catalog metric's default file aggregation without score thresholds. Files with nonpositive area are omitted before calculating automatic group limits and the legend. Missing numeric measurements do not enter score aggregates and produce a warning; no qualifying measurements give 0.</p>
-    <p>Show functions temporarily subdivides files. The file border keeps its score. Function tiles use their own measurements and exclude file-only metrics; empty groups are omitted. Group limits and the legend are shared. Outside-function code stays neutral. Function tile sizing is configured separately in the preset and uses raw values without score thresholds. Older results require a new inspection.</p>
-    <p>Only inspected source files appear. Git history is subject to import limits and date filters; renames are not followed. Reconstructed conflicts are not proof of historical conflicts or who resolved them. Possible mutations include conservative estimates. Function line spans include nested functions. Cognitive complexity follows the local analyzer rule.</p></details>
-    <div id="metric-help-list">${[['Code metrics', 'code_'], ['Git metrics', 'git_']].map(([title, prefix]) => `<section class="metric-help-group"><h2>${title}</h2><div class="metric-help-entries">${metricHelp.filter(entry => entry.metric.startsWith(prefix)).map(entry => `<details class="metric-help-entry"><summary><span class="metric-help-summary"><strong>${esc(entry.label)}</strong><span>${esc(entry.short)}</span></span></summary><dl><div><dt>Calculation</dt><dd>${esc(entry.long)} <code>${esc(entry.metric)}</code></dd></div><div><dt>Example</dt><dd><pre>${esc(entry.example)}</pre></dd></div></dl></details>`).join('')}</div></section>`).join('')}</div><p id="metric-help-empty" hidden>No matching metrics.</p></div>`;
+  return `<div class="metric-help"><div class="help-toolbar"><h1>Help</h1><label class="help-search" for="metric-help-search">Search metrics<input id="metric-help-search" type="search" placeholder="Name, JavaScript key or description" aria-controls="metric-help-list"></label><span id="metric-help-count" class="hint" role="status">${metricHelp.length} metrics</span></div>
+    <details class="metric-guide"><summary>Scores, execution and missing values</summary><p>Score definition and filter determine a reusable calculation. Path filters select files; Git dates restrict imported commits without changing the source snapshot. All views share these scores. Treemap area and heat scales are independent.</p><p>Each function formula runs once per function. Its file aggregation receives only scores, an array of that field's function results. File score = all aggregated function contributions + all file formula contributions. Function score = all function contributions before aggregation.</p><p>Code runs synchronously on this server in a reusable worker thread. Use trusted code only. JavaScript builtins, Lodash as _ and direct Lodash functions are available. File, network and module access are not provided. The worker is not a security sandbox. Avoid expensive loops; hanging calculations are aborted.</p><p>Every formula must return a finite number. Negative scores are allowed. Missing measurements are null; handle them explicitly with ?? or a condition. Errors produce null and a diagnostic, including dependent totals. Unscored items remain visible in a neutral color. An empty scores array represents a file without functions; sum(scores) returns 0.</p><p>Scalar metrics are numbers; event metrics are arrays of numbers or nulls. Unknown or unavailable measurements are null. Event counters are arrays of ones: use .length or size to count, sum for flags and measured values. Function line spans may include nested functions. Source metrics describe static sites, not executions; Git history is limited to imported commits and does not follow renames.</p></details>
+    <details class="metric-guide" open><summary>JavaScript examples</summary><div class="formula-examples">${examples.map(([title,code]) => `<div><strong>${esc(title)}</strong><pre>${esc(code)}</pre></div>`).join('')}</div></details>
+    <details class="metric-guide"><summary>Common tools · Lodash and JavaScript</summary><p>All Lodash functions are available through _ and directly. Autocompletion lists the functions.</p><dl><dt>sum(values), sumBy(values, iteratee)</dt><dd>Add values or mapped values.</dd><dt>mean(values), meanBy(values, iteratee)</dt><dd>Average values. Handle empty arrays explicitly.</dd><dt>min(values), max(values)</dt><dd>Smallest or largest value; empty arrays return undefined.</dd><dt>size(value), countBy(values, iteratee)</dt><dd>Count elements or group their counts.</dd><dt>map, filter, reduce, sortBy, orderBy, clamp, round</dt><dd>Transform, select, combine, order and bound values.</dd><dt>Math.max, Math.min, Math.sqrt, Math.log1p</dt><dd>JavaScript numeric functions.</dd><dt>??, condition ? yes : no</dt><dd>Handle missing values and conditional scoring.</dd></dl></details>
+    <div id="metric-help-list">${[['Function metrics','function'],['File metrics · Code','code'],['File metrics · Git','git']].map(([title,category]) => `<section class="metric-help-group"><h2>${title}</h2><div class="metric-help-entries">${metricHelp.filter(entry => entry.category === category).map(entry => `<details class="metric-help-entry"><summary><span class="metric-help-summary"><strong>${esc(entry.label)}</strong><span>${esc(entry.short)}</span></span></summary><dl><div><dt>JavaScript · ${esc(entry.type)}</dt><dd><code>metrics.${esc(entry.key)}</code><p>${esc(entry.description)}</p></dd></div><div><dt>Example</dt><dd><pre>${entry.type.startsWith('number') ? `metrics.${esc(entry.key)} ?? 0` : `sum(metrics.${esc(entry.key)} ?? [])`}</pre><p class="hint">Source: ${esc(entry.metric)}</p></dd></div></dl></details>`).join('')}</div></section>`).join('')}</div><p id="metric-help-empty" hidden>No matching metrics.</p></div>`;
 }
-
 export function filterMetricHelp(view, query) {
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   let visible = 0;
-  for (const entry of view.querySelectorAll('.metric-help-entry')) {
-    const content = entry.textContent.toLowerCase();
-    entry.hidden = !words.every(word => content.includes(word));
-    if (!entry.hidden) visible++;
-  }
+  for (const entry of view.querySelectorAll('.metric-help-entry')) { entry.hidden = !words.every(word => entry.textContent.toLowerCase().includes(word)); if (!entry.hidden) visible++; }
   for (const group of view.querySelectorAll('.metric-help-group')) group.hidden = !group.querySelector('.metric-help-entry:not([hidden])');
   view.querySelector('#metric-help-count').textContent = `${visible} metrics`;
   view.querySelector('#metric-help-empty').hidden = visible !== 0;

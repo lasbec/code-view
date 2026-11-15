@@ -1,0 +1,23 @@
+{
+  "name": "code-view-score-code",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "test": "node --test",
+    "score": "node cli.mjs"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lint": "^6.9.8",
+    "@types/lodash": "^4.17.20",
+    "codemirror": "^6.0.2",
+    "esbuild": "^0.28.2",
+    "lodash": "^4.18.1",
+    "minimatch": "11.0.8",
+    "typescript": "^5.9.3"
+  }
+}

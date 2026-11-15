@@ -1,21 +1,23 @@
 import { developerData } from './developers.mjs';
 import { inspectionList } from './inspection-list.mjs';
-import { parentPort, workerData } from 'node:worker_threads';
+import { serveScoreWorker } from '../score-code/worker.mjs';
 import { readFile } from 'node:fs/promises';
 import { calculateTreeMap, renderTreeMap, listMetrics } from '../treemap/src/index.mjs';
-try {
+serveScoreWorker(async workerData => {
+  workerData.preset.options.scoreData = workerData.scoreData;
   const bytes = await readFile(workerData.path);
   if (workerData.list) {
-    const model = await calculateTreeMap(bytes, workerData.preset.config, workerData.preset.options);
-    if (!model.ok) throw new Error(model.diagnostics.map(d => d.message).join(' '));
+    const functions = Map.groupBy(workerData.scoreData.functions, fn => fn.file_id);
+    const model = { files: workerData.scoreData.files.map(file => ({ ...file, heat: file.score, children: (functions.get(file.id) ?? []).map(fn => ({...fn,kind:'function',heat:fn.score})) })),
+      diagnostics: [...workerData.scoreData.files,...workerData.scoreData.functions].filter(item=>item.error).map(item=>({severity:'warning',message:`${item.id}: ${item.error}`})) };
     const list = inspectionList(workerData.path, model);
-    parentPort.postMessage(workerData.list === 'developers' ? developerData(workerData.path, list.files, workerData.preset.developerPreset, workerData.preset.options.authorIdentities, workerData.preset.options) : list);
+    return (workerData.list === 'developers' ? developerData(workerData.path, list.files, workerData.preset.developerPreset, workerData.preset.options.authorIdentities, workerData.preset.options) : list);
   } else {
   const metrics = await listMetrics(bytes);
   const result = await calculateTreeMap(bytes, workerData.preset.config, workerData.preset.options);
-  const expanded = workerData.detail ? await calculateTreeMap(bytes, workerData.preset.config, { ...workerData.preset.options, include: [], exclude: [], showFunctions: true }) : result;
+  const expanded = workerData.detail ? await calculateTreeMap(bytes, workerData.preset.config, { ...workerData.preset.options, showFunctions: true }) : result;
   if (result.ok && workerData.preset.developerPreset) {
-    const all = await calculateTreeMap(bytes, workerData.preset.config, { ...workerData.preset.options, include: [], exclude: [], includeZeroArea: true, showFunctions: true });
+    const all = await calculateTreeMap(bytes, workerData.preset.config, { ...workerData.preset.options, includeZeroArea: true, showFunctions: true });
     if (!all.ok) throw new Error(all.diagnostics.map(d => d.message).join(' '));
     const data = developerData(workerData.path, inspectionList(workerData.path, all).files, workerData.preset.developerPreset, workerData.preset.options.authorIdentities, workerData.preset.options);
     const palette = ['#0072b2','#e66100','#009e73','#cc3377','#e6b800','#6633bb','#00a6b2','#b52b28','#668800','#aa4499','#336633','#996633'];
@@ -34,6 +36,6 @@ try {
     if (expanded !== result && expanded.ok) { annotate(expanded.tree); for (const file of expanded.files) annotate(file); }
     result.authors = [...new Map(Object.values(data.mainAuthors).map(a => [a.id,{ ...a, color: colors.get(a.id) }])).values()];
   }
-  parentPort.postMessage({ ...renderTreeMap(result), metrics, ...(workerData.detail ? { model: result, expanded } : {}), ok: result.ok, diagnostics: result.diagnostics });
+  return ({ ...renderTreeMap(result), metrics, ...(workerData.detail ? { model: result, expanded } : {}), ok: result.ok, diagnostics: result.diagnostics });
   }
-} catch (error) { parentPort.postMessage({ error: error.message }); }
+});

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createApp } from '../server.mjs';
-import { openStore, validateInspection, validatePreset, defaultPreset } from '../store.mjs';
+import { openStore, validateInspection, validatePreset, defaultPreset, validateFilter, validateTreemap, defaultTreemap } from '../store.mjs';
 import { metricHelp } from '../public/metric-help.js';
 
 async function temporary(t) { const dir = await mkdtemp(join(tmpdir(), 'code-view-')); t.after(() => rm(dir, { recursive: true, force: true })); return dir; }
@@ -14,7 +14,7 @@ test('validates repository boundaries, commit limits and treemap thresholds', ()
   assert.throws(() => validateInspection({ ...c, tsconfig: '../secret.json' }));
   assert.throws(() => validateInspection({ ...c, commits: 1.5 }));
   assert.equal(validateInspection(c).commits, null);
-  assert.throws(() => validatePreset({ ...defaultPreset(), config: { ...defaultPreset().config, heat: { min: 20, max: 10 } } }));
+  assert.throws(() => validateTreemap({ ...defaultTreemap(), config: { ...defaultTreemap().config, heat: { min: 20, max: 10 } } }));
 });
 test('author identities normalize emails and reject ambiguous or malformed mappings', () => {
   const c = { name: 'test', repository: '/tmp/repo', tsconfig: 'tsconfig.json' };
@@ -32,22 +32,17 @@ test('author identities normalize emails and reject ambiguous or malformed mappi
 test('serialized storage survives restart without losing concurrent changes', async t => {
   const dir = await temporary(t), store = await openStore(dir);
   await Promise.all([store.update(s => { s.selection.inspection = 'first'; }), store.update(s => { s.selection.preset = 'second'; })]);
-  assert.deepEqual((await openStore(dir)).get().selection, { inspection: 'first', preset: 'second' });
+  assert.equal((await openStore(dir)).get().selection.inspection, 'first');
+  assert.equal((await openStore(dir)).get().selection.preset, 'second');
 });
-test('saved minimum depth presets migrate to down depth without changing up depth presets', async t => {
-  const dir=await temporary(t), store=await openStore(dir);
+test('score, filter and treemap presets persist independently without migration', async t => {
+  const dir = await temporary(t), store = await openStore(dir);
   await store.update(s => {
-    s.presets[0].config.scores[0].metrics=[
-      {metric:'code_functions.minimum_call_depth',aggregation:'max'},
-      {metric:'code_functions.call_depth',aggregation:'max'},
-    ];
+    s.presets[0].config.fields[0].code = 'metrics.down_call_depth';
+    s.filters[0].options.exclude = ['test/**'];
+    s.treemaps[0].config.heat = { min: -10, max: 100 };
   });
-  const reopened=await openStore(dir), state=reopened.get();
-  assert.deepEqual(state.presets[0].config.scores[0].metrics.map(m=>m.metric),[
-    'code_functions.down_call_depth','code_functions.call_depth',
-  ]);
-  assert.equal(state.presets[0].id,store.get().presets[0].id);
-  assert.deepEqual((await openStore(dir)).get(),state);
+  assert.deepEqual((await openStore(dir)).get(),store.get());
 });
 test('HTTP lifecycle handles a branch matching a path, renders results, and retains results on failure and cancellation', { timeout: 60000 }, async t => {
   const dir = await temporary(t), repo = join(dir, 'repository'); await mkdir(repo);
@@ -145,7 +140,7 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.match(functionView.value.treeMapHtml, /Outside functions/);
   assert.match(functionView.value.treeMapHtml, /exclusive_size_bytes/);
   assert.equal((await call(`treemap?inspection=${inspection.id}&preset=${state.presets[0].id}&showFunctions=invalid`)).status,400);
-  assert.equal((await openStore(data)).get().presets[0].options.showFunctions,undefined);
+  assert.equal((await openStore(data)).get().treemaps[0].config.showFunctions,undefined);
   // Compare against the catalog from real inspector schemas so new selectable
   // columns cannot silently ship without descriptions and examples.
   const documented = new Map(metricHelp.map(entry => [entry.metric, entry]));
@@ -179,27 +174,16 @@ test('HTTP lifecycle handles a branch matching a path, renders results, and reta
   assert.equal(persisted.selection.inspection, inspection.id);
 });
 
-test('old treemap presets are discarded once while inspections, results and their selection survive',async t=>{
-  const dir=await temporary(t),old={inspections:[{id:'repo',name:'Keep',result:{completedAt:'2026-01-01'},repository:'/repo'}],presets:[{id:'old',name:'Old',config:{}}],selection:{inspection:'repo',preset:'old'}};
-  await writeFile(join(dir,'config.json'),JSON.stringify(old));
-  const store=await openStore(dir),state=store.get();
-  assert.deepEqual(state.inspections,old.inspections);
-  assert.equal(state.selection.inspection,'repo');
-  assert.equal(state.presets.length,1);assert.notEqual(state.presets[0].id,'old');
-  assert.equal(state.selection.preset,state.presets[0].id);
-  validatePreset(state.presets[0]);
+test('opening storage preserves saved score definitions and identities', async t => {
+  const dir=await temporary(t), store=await openStore(dir);
   await store.update(s=>{s.presets[0].name='Customized';});
-  assert.equal((await openStore(dir)).get().presets[0].name,'Customized');
+  assert.deepEqual((await openStore(dir)).get(),store.get());
 });
 
-test('server rejects invalid scoring options and unknown catalog metrics before saving',()=>{
-  const preset=defaultPreset();
-  for(const config of [
-    {...preset.config,operation:'average'}, {...preset.config,quantile:101},
-    {...preset.config,scores:[{name:'Bad',normalize:'yes',metrics:[{metric:'code_functions.count'}]}]},
-    {...preset.config,scores:[{name:'Bad',max:0,metrics:[{metric:'code_functions.count'}]}]},
-    {...preset.config,scores:[{name:'Bad',metrics:[{metric:'code_diagnostics.code'}]}]},
-  ]) assert.throws(()=>validatePreset({...preset,config}),error=>error.status===400);
-  const config={...preset.config,operation:'quantile',quantile:25,scores:[{name:'Q',normalize:false,max:80,metrics:[{metric:'code_functions.cyclomatic_complexity',min:10,aggregation:'quantile',quantile:90,factor:2}]}]};
+test('server validates structure while allowing JavaScript errors to be saved', () => {
+  const preset = defaultPreset();
+  for (const config of [{fields:[]},{fields:[{kind:'bad',code:'1'}]},{fields:[{kind:'function',code:1}]},{...preset.config,heat:{}}]) assert.throws(()=>validatePreset({...preset,config}),error=>error.status===400);
+  const config={fields:[{id:'broken',kind:'function',code:'return (',aggregation:'sum(scores)',name:'Broken',autoName:false}]};
   assert.deepEqual(validatePreset({...preset,config}).config,config);
+  assert.throws(()=>validateFilter({name:'Bad dates',options:{since:'2026-01-01',until:'2025-01-01'}}));
 });

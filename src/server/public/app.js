@@ -3,7 +3,8 @@ import { mountDevelopers } from './developers-view.js';
 import { mountGraph } from './graph-view.js';
 import { mountInspectionList, clearListDataCache } from './list-view.js';
 import { showDetailRoute, closeDetail, detailHash } from './detail-view.js';
-import { metricSelect, functionAreaSelect, termHtml, scoreHtml, readScores, operationSelect, updateAggregation } from './preset-fields.js';
+import { metricSelect, functionAreaSelect } from './preset-fields.js';
+import { formulaField, readFields, mountScoreEditors, destroyScoreEditors, confirmSyntax } from './score-fields.js';
 import { progressHtml } from './progress-view.js';
 import { metricHelpHtml, filterMetricHelp } from './metric-help.js';
 import { initTheme, treemapThemeStyles, receiveTreemapTheme } from './theme.js';
@@ -15,16 +16,18 @@ let dataContext = '';
 function saveViewPreferences() {
   Object.assign(preferences, { showFunctions, showDirectories, colorByAuthor }); savePreferences(preferences);
 }
-const preferenceKey = () => JSON.stringify([selectedInspection()?.id, selectedPreset()?.id]);
+const preferenceKey = () => JSON.stringify([selectedInspection()?.id, selectedPreset()?.id, selectedFilter()?.id, selectedTreemap()?.id]);
 function clearDataCaches() { dataCache.clear(); clearListDataCache(); }
 
-let state, metrics = [], newInspection = false, newPreset = false, treeKey = '', listKey = '', requestNumber = 0;
+let state, metrics = [], newInspection = false, newPreset = false, newSettings = false, treeKey = '', listKey = '', requestNumber = 0;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const route = () => location.hash.slice(1) || 'treemap';
 const lines = text => text.split('\n').map(s => s.trim()).filter(Boolean);
 const selectedInspection = () => state.inspections.find(c => c.id === state.selection.inspection) ?? state.inspections[0];
 const selectedPreset = () => state.presets.find(c => c.id === state.selection.preset) ?? state.presets[0];
-const defaultPreset = () => ({ name: '', config: { area: 'code_files.effective_lines', operation: 'sum', scores: [{ name: 'Complexity', normalize: true, metrics: [{ metric: 'code_functions.cyclomatic_complexity', min: 10, aggregation: 'sum', factor: 1 }] }] }, options: {} });
+const selectedFilter = () => state.filters.find(c => c.id === state.selection.filter) ?? state.filters[0];
+const selectedTreemap = () => state.treemaps.find(c => c.id === state.selection.treemap) ?? state.treemaps[0];
+const defaultPreset = () => ({ name: '', config: { fields: [{ id: crypto.randomUUID(), kind: 'function', name: 'Cyclomatic complexity', autoName: true, code: 'metrics.cyclomatic_complexity', aggregation: 'sum(scores)' }] } });
 function notice(error) { const n = document.querySelector('#notice'); n.textContent = error?.message ?? error ?? ''; n.hidden = !error; }
 async function api(path, method = 'GET', data) {
   const fetchValue = async () => {
@@ -35,12 +38,12 @@ async function api(path, method = 'GET', data) {
   };
   if (method === 'GET' && /^(treemap|list|developers|detail|graph)\?/.test(path)) return dataCache.get(`${dataContext}:${path}`, fetchValue);
   const value = await fetchValue();
-  if (method !== 'GET' && path !== 'selection') clearDataCaches();
+  if (method !== 'GET' && !['selection','score/editor'].includes(path)) clearDataCaches();
   return value;
 }
 async function load() {
   state = await api('state');
-  const context = JSON.stringify([state.inspections, state.presets, state.developerPresets, state.graphPresets, state.selection?.developerPreset]);
+  const context = JSON.stringify([state.inspections, state.presets, state.filters, state.treemaps, state.selection?.filter, state.selection?.treemap, state.developerPresets, state.graphPresets, state.selection?.developerPreset]);
   if (context !== dataContext) { dataContext = context; clearDataCaches(); }
 }
 document.querySelector('#reload-data').onclick = async event => {
@@ -59,6 +62,7 @@ function authorIdentityHtml(identity = {}) {
   return `<div class="row author-identity">${input('Name', 'author-name', identity.name, 'required')}${input('Primary email', 'author-email', identity.email, 'type="email" required')}${input('Other emails, separated by commas', 'author-aliases', (identity.aliases ?? []).join(', '))}<button type="button" data-action="remove-author">Remove author</button></div>`;
 }
 function render() {
+  destroyScoreEditors();
   if (route().startsWith('detail?')) { showDetailRoute(api); return; }
   const hadDetail = !!document.querySelector('#detail-view');
   closeDetail();
@@ -72,6 +76,7 @@ function render() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.hash === `#${route()}`));
   if (route() === 'inspections') inspectionView();
   else if (route() === 'presets') presetView();
+  else if (['filters','treemap-settings'].includes(route())) settingsView();
   else if (['files', 'functions'].includes(route())) listView();
   else if (route() === 'developers') { listKey = currentTreeKey(); view.innerHTML = ''; mountDevelopers(view, { state, api, reload: load }); }
   else if (route() === 'graph') {
@@ -93,7 +98,7 @@ function render() {
 function listView() {
   listKey = currentTreeKey();
   const c = selectedInspection(), p = selectedPreset(), functions = route() === 'functions';
-  view.innerHTML = `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection', 'inspection')}${selection(state.presets, p?.id, 'Scoring preset', 'preset')}</div><div class="list-heading"><h1>${functions ? 'Functions' : 'Files'}</h1><p class="hint">All inspected ${functions ? 'functions' : 'files'}</p></div><section data-list-route="${route()}"></section>`;
+  view.innerHTML = `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection', 'inspection')}${selection(state.presets, p?.id, 'Score', 'preset')}${selection(state.filters, selectedFilter()?.id, 'Filter', 'filter')}</div><div class="list-heading"><h1>${functions ? 'Functions' : 'Files'}</h1><p class="hint">All inspected ${functions ? 'functions' : 'files'}</p></div><section data-list-route="${route()}"></section>`;
   const host = view.querySelector('[data-list-route]');
   if (!c?.hasResults || !p) { host.innerHTML = '<p class="muted">Choose an inspection with results and a scoring preset.</p>'; return; }
   mountInspectionList(host, { kind: functions ? 'function' : 'file', inspection: c, preset: p, api,
@@ -111,16 +116,25 @@ function inspectionView() {
     <fieldset><legend>Author identities</legend><p class="hint">Combine known email addresses for the same person. Applies to all treemap presets for this repository without another inspection.</p><div id="author-identities">${(c.authorIdentities ?? []).map(authorIdentityHtml).join('')}</div><button type="button" data-action="add-author">Add author identity</button></fieldset>
     <div class="actions"><button class="primary" type="submit">Save configuration</button>${c.id ? '<button type="button" data-action="delete-inspection" class="danger">Delete</button>' : ''}</div></fieldset><p data-busy-hint ${busy ? '' : 'hidden'}>Inspection is running. Cancel it or wait before editing.</p></form>`;
 }
+const configTabs = () => `<div class="config-tabs">${[['presets','Score configuration'],['filters','Filters'],['treemap-settings','Treemap settings']].map(([id,label]) => `<a href="#${id}" class="${route() === id ? 'active' : ''}">${label}</a>`).join('')}</div>`;
 function presetView() {
-  const p = !newPreset && selectedPreset() || defaultPreset(), h = p.config.heat ?? {}, o = p.options ?? {};
-  view.innerHTML = heading('Treemap configuration', 'Save presentation presets and use them with any inspected repository.') +
-    `<div class="card toolbar">${selection(state.presets, p.id, 'Saved treemap configuration', 'preset')}<button data-action="new-preset">New preset</button><button data-action="duplicate-preset" ${p.id ? '' : 'disabled'}>Duplicate</button></div>
-    <form id="preset-form" class="card" data-id="${esc(p.id)}"><div class="row">${input('Preset name', 'name', p.name, 'required')}${metricSelect('Rectangle area metric', 'area', p.config.area)}${functionAreaSelect(p.config.functionArea)}</div>
-    <p class="hint"><a href="#help">Metric help: descriptions, calculation rules and examples</a></p>
-    <h2>Score groups</h2><p class="hint">Only values above the threshold contribute their excess. Aggregate per file, apply weights, then cap and optionally normalize each group. Use one to three groups.</p><div class="row">${operationSelect('operation', p.config.operation ?? 'sum', ['sum', 'quantile', 'min', 'max', 'product'])}<span id="group-quantile" ${(p.config.operation ?? 'sum') === 'quantile' ? '' : 'hidden'}>${input('Group quantile (0–100)', 'group-quantile', p.config.quantile, 'type="number" min="0" max="100" step="any" placeholder="50"')}</span></div><div id="scores">${p.config.scores.map(scoreHtml).join('')}</div><button type="button" data-action="add-score">Add score group</button>
-    <fieldset><legend>Heat thresholds</legend><p class="hint">Leave blank to calculate thresholds from the filtered results.</p><div class="row">${['min', 'yellowFrom', 'redFrom', 'max'].map((k, i) => input(['Minimum', 'Yellow from', 'Red from', 'Maximum'][i], `heat-${k}`, h[k], 'type="number" min="0" step="any" placeholder="Automatic"')).join('')}</div></fieldset>
-    <fieldset><legend>Filters</legend><div class="row">${patterns('Include paths', 'include', o.include)}${patterns('Exclude paths', 'exclude', o.exclude)}</div><p class="hint">Treemap patterns are relative to the repository root.</p><div class="row">${input('Git history since', 'since', o.since, 'placeholder="2025-01-01T00:00:00Z"')}${input('Git history until', 'until', o.until, 'placeholder="2026-12-31T23:59:59Z"')}</div></fieldset>
-    <div class="actions"><button class="primary" type="submit">Save preset</button>${p.id ? '<button type="button" class="danger" data-action="delete-preset">Delete</button>' : ''}</div></form>`;
+  const p = !newPreset && selectedPreset() || defaultPreset();
+  view.innerHTML = configTabs() + heading('Score configuration', 'JavaScript contributions, shared across every view.') +
+    `<div class="card toolbar">${selection(state.presets, p.id, 'Saved score', 'preset')}<button data-action="new-preset">New</button><button data-action="duplicate-preset" ${p.id ? '' : 'disabled'}>Duplicate</button></div>
+    <form id="preset-form" class="card score-config" data-id="${esc(p.id)}">${input('Configuration name', 'name', p.name, 'required')}
+    <p class="execution-warning">JavaScript runs on this server. Use trusted code only. Synchronous JavaScript and Lodash are available; file, network and module access are not provided. <a href="#help">Examples &amp; tools</a></p>
+    <div class="formula-section-heading"><h2>Contributions</h2><span class="hint">All file contributions are added</span></div><div id="formula-fields">${p.config.fields.map(formulaField).join('')}</div>
+    <div class="actions add-fields"><button type="button" data-action="add-function-field">＋ Function metric</button><button type="button" data-action="add-file-field">＋ File metric</button></div>
+    <div class="actions"><button class="primary" type="submit">Save &amp; apply</button>${p.id ? '<button type="button" class="danger" data-action="delete-preset">Delete</button>' : ''}</div></form>`;
+  mountScoreEditors(view, api);
+}
+function settingsView() {
+  const filters = route() === 'filters', collection = filters ? 'filters' : 'treemaps', key = filters ? 'filter' : 'treemap';
+  const p = !newSettings && (filters ? selectedFilter() : selectedTreemap()) || (filters ? { name: '', options: { include: [], exclude: [] } } : { name: '', config: { area: 'code_files.effective_lines', functionArea: 'code_functions.exclusive_size_bytes', heat: {} } });
+  const o = p.options ?? {}, h = p.config?.heat ?? {};
+  view.innerHTML = configTabs() + heading(filters ? 'Filters' : 'Treemap settings', filters ? 'Reusable path and Git history scope for every score.' : 'Area and heat scale, independent of scoring.') +
+    `<div class="card toolbar">${selection(state[collection], p.id, 'Saved configuration', key)}<button data-action="new-settings">New</button><button data-action="duplicate-settings" ${p.id ? '' : 'disabled'}>Duplicate</button></div>
+    <form id="settings-form" class="card settings-config" data-collection="${collection}" data-id="${esc(p.id)}">${input('Configuration name','name',p.name,'required')}${filters ? `<div class="row">${patterns('Include paths','include',o.include)}${patterns('Exclude paths','exclude',o.exclude)}</div><p class="hint">Paths are relative to the repository root. Empty includes match all files.</p><div class="row">${input('Git history since','since',o.since,'placeholder="2025-01-01T00:00:00Z"')}${input('Git history until','until',o.until,'placeholder="2026-12-31T23:59:59Z"')}</div><p class="hint">Dates filter imported Git commits, not the analyzed source snapshot.</p>` : `<div class="row">${metricSelect('File tile size','area',p.config.area)}${functionAreaSelect(p.config.functionArea)}</div><h2>Heat scale</h2><p class="hint">Leave blank for automatic bounds from the selected score and filter.</p><div class="row">${['min','yellowFrom','redFrom','max'].map((k,i) => input(['Minimum','Yellow from','Red from','Maximum'][i], 'heat-'+k,h[k],'type="number" step="any" placeholder="Automatic"')).join('')}</div><button type="button" data-action="use-local-heat">Use current legend values</button>`}<div class="actions"><button class="primary">Save &amp; apply</button>${p.id ? '<button type="button" class="danger" data-action="delete-settings">Delete</button>' : ''}</div></form>`;
 }
 function jobHtml() {
   const j = state.job;
@@ -150,14 +164,15 @@ function updateProgress() {
 function treemapView() {
   const c = selectedInspection(), p = selectedPreset();
   view.innerHTML =
-    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}<label>Treemap configuration<select data-select="preset">${options(state.presets, colorByAuthor ? null : p?.id)}<optgroup label="Special configurations"><option value="__author__" ${colorByAuthor ? 'selected' : ''}>Color by author</option></optgroup></select></label><label class="checkbox-label"><input type="checkbox" id="show-functions" ${showFunctions ? 'checked' : ''}>Show functions</label><label class="checkbox-label"><input type="checkbox" id="show-directories" ${showDirectories ? 'checked' : ''}>Show directories</label>${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}${p ? ` · Area: ${esc(p.config.area)}.` : ''}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
+    `<div class="card toolbar">${selection(state.inspections, c?.id, 'Inspection configuration', 'inspection')}<label>Score<select data-select="preset">${options(state.presets, colorByAuthor ? null : p?.id)}<optgroup label="Special configurations"><option value="__author__" ${colorByAuthor ? 'selected' : ''}>Color by author</option></optgroup></select></label>${selection(state.filters, selectedFilter()?.id, 'Filter', 'filter')}${selection(state.treemaps, selectedTreemap()?.id, 'Treemap', 'treemap')}<label class="checkbox-label"><input type="checkbox" id="show-functions" ${showFunctions ? 'checked' : ''}>Show functions</label><label class="checkbox-label"><input type="checkbox" id="show-directories" ${showDirectories ? 'checked' : ''}>Show directories</label>${c ? `<button class="primary" data-action="run" ${state.job?.status === 'running' ? 'disabled' : ''}>${c.hasResults ? 'Run inspection' : 'Start inspection'}</button>` : ''}</div><div id="map-state">${c?.stale ? '<p class="badge">Settings changed. Run inspection to update results.</p>' : ''}${c?.result ? `<p class="hint">Last successful inspection: ${esc(new Date(c.result.completedAt).toLocaleString())} · ${esc(c.result.branch)}${p ? ` · Area: ${esc(selectedTreemap()?.config.area)}.` : ''}</p>` : ''}</div><div id="map"></div><details id="warnings"><summary>Warnings</summary><div id="warning-content"><p class="muted">No warnings.</p></div></details>`;
   if (!c) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Please configure inspection</h2><p class="muted">Choose a local repository to get started.</p><a class="button primary" href="#inspections">Configure inspection</a></div>';
   else if (!c.hasResults) document.querySelector('#map').innerHTML = '<div class="card empty"><div class="symbol">▦</div><h2>Start inspection</h2><p class="muted">Run the inspectors to explore this repository.</p></div>';
   else if (!p) document.querySelector('#map').innerHTML = '<div class="card empty"><h2>Please configure a treemap preset</h2><a class="button" href="#presets">Create preset</a></div>';
+  else if (!selectedFilter() || !selectedTreemap()) document.querySelector('#map').innerHTML = '<div class="card empty"><h2>Choose a filter and treemap settings</h2><a href="#filters">Configure filters</a> · <a href="#treemap-settings">Configure treemap</a></div>';
   else { document.querySelector('#map').innerHTML = '<p class="muted">Calculating treemap…</p>'; drawMap(c, p, requestNumber); }
   treeKey = currentTreeKey();
 }
-function currentTreeKey() { return JSON.stringify([showFunctions, state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset(), state.developerPresets]); }
+function currentTreeKey() { return JSON.stringify([showFunctions, state.selection, selectedInspection()?.result, selectedInspection()?.stale, selectedInspection()?.hasResults, selectedInspection()?.authorIdentities, selectedPreset(), selectedFilter(), selectedTreemap(), state.developerPresets]); }
 async function drawMap(c, p, number) {
   try {
     const result = await api(`treemap?inspection=${encodeURIComponent(c.id)}&preset=${encodeURIComponent(p.id)}&showFunctions=${showFunctions}`);
@@ -183,24 +198,22 @@ function sendTreeViewOptions() {
   document.querySelector('#map iframe')?.contentWindow?.postMessage({ type: 'code-view-options', showDirectories, colorByAuthor, heat: preferences.heat?.[preferenceKey()], disabledAuthors: preferences.disabledAuthors?.[preferenceKey()] ?? [] }, '*');
 }
 view.addEventListener('input', event => {
+  if (event.target.name === 'field-name') event.target.closest('.formula-field').dataset.autoName = 'false';
   if (event.target.id === 'metric-help-search') filterMetricHelp(view, event.target.value);
 });
 document.addEventListener('change', async event => {
   if (event.target.id === 'show-directories') { showDirectories = event.target.checked; saveViewPreferences(); sendTreeViewOptions(); return; }
   if (event.target.id === 'show-functions') { showFunctions = event.target.checked; saveViewPreferences(); render(); return; }
-  if (event.target.name === 'metric') updateAggregation(event.target.closest('.term'));
-  if (event.target.name === 'aggregation' && event.target.closest('.term')) event.target.closest('.term').querySelector('.quantile-field').hidden = event.target.value !== 'quantile';
-  if (event.target.name === 'operation') document.querySelector('#group-quantile').hidden = event.target.value !== 'quantile';
   const key = event.target.dataset.select;
   if (!key || !event.target.value) return;
   if (key === 'preset') {
     colorByAuthor = event.target.value === '__author__'; saveViewPreferences();
     if (colorByAuthor) { sendTreeViewOptions(); return; }
   }
-  try { await api('selection', 'POST', { [key]: event.target.value }); newInspection = newPreset = false; await load(); render(); } catch (e) { notice(e); }
+  try { await api('selection', 'POST', { [key]: event.target.value }); newInspection = newPreset = newSettings = false; await load(); render(); } catch (e) { notice(e); }
 });
 view.addEventListener('submit', async event => {
-  if (!['inspection-form', 'preset-form'].includes(event.target.id)) return;
+  if (!['inspection-form', 'preset-form', 'settings-form'].includes(event.target.id)) return;
   event.preventDefault(); notice(null);
   const form = event.target, data = new FormData(form), id = form.dataset.id;
   let value, collection;
@@ -211,15 +224,24 @@ view.addEventListener('submit', async event => {
       aliases: row.querySelector('[name="author-aliases"]').value.split(',').map(email => email.trim()).filter(Boolean),
     }));
     collection = 'inspections'; value = { name: data.get('name'), repository: data.get('repository'), tsconfig: data.get('tsconfig'), commits: data.get('commits') === '' ? null : Number(data.get('commits')), include: lines(data.get('include')), exclude: lines(data.get('exclude')), authorIdentities };
-  } else {
+  } else if (form.id === 'preset-form') {
     collection = 'presets';
-    const scores = readScores(form);
-    const heat = {}; for (const k of ['min', 'max', 'yellowFrom', 'redFrom']) if (data.get(`heat-${k}`) !== '') heat[k] = Number(data.get(`heat-${k}`));
-    const options = { include: lines(data.get('include')), exclude: lines(data.get('exclude')) };
-    for (const k of ['since', 'until']) if (data.get(k)) options[k] = data.get(k);
-    value = { name: data.get('name'), config: { area: data.get('area'), functionArea: data.get('functionArea'), operation: data.get('operation'), ...(data.get('operation') === 'quantile' ? { quantile: Number(data.get('group-quantile') || 50) } : {}), scores, heat }, options };
+    const fields = readFields(form);
+    if (!fields.length) { notice('Add at least one contribution.'); return; }
+    try { if (!await confirmSyntax(fields, api)) return; } catch (error) { notice(error); return; }
+    value = { name: data.get('name'), config: { fields } };
+  } else {
+    collection = form.dataset.collection;
+    if (collection === 'filters') {
+      const options = { include: lines(data.get('include')), exclude: lines(data.get('exclude')) };
+      for (const key of ['since','until']) if (data.get(key)) options[key] = data.get(key);
+      value = { name: data.get('name'), options };
+    } else {
+      const heat = {}; for (const key of ['min','yellowFrom','redFrom','max']) if (data.get('heat-'+key) !== '') heat[key] = Number(data.get('heat-'+key));
+      value = { name: data.get('name'), config: { area: data.get('area'), functionArea: data.get('functionArea'), heat } };
+    }
   }
-  try { await api(`${collection}${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', value); newInspection = newPreset = false; await load(); render(); const message = document.createElement('p'); message.className = 'saving'; message.textContent = 'Saved.'; view.prepend(message); } catch (e) { notice(e); }
+  try { await api(`${collection}${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', value); if (collection === 'treemaps' && preferences.heat) { delete preferences.heat[preferenceKey()]; savePreferences(preferences); } newInspection = newPreset = newSettings = false; await load(); render(); const message = document.createElement('p'); message.className = 'saving'; message.textContent = 'Saved.'; view.prepend(message); } catch (e) { notice(e); }
 });
 document.addEventListener('click', async event => {
   const button = event.target.closest('[data-action]'); if (!button) return;
@@ -229,12 +251,14 @@ document.addEventListener('click', async event => {
     if (action === 'add-author') { document.querySelector('#author-identities').insertAdjacentHTML('beforeend', authorIdentityHtml()); return; }
     if (action === 'remove-author') { button.closest('.author-identity').remove(); return; }
     if (action === 'new-preset') { newPreset = true; render(); return; }
-    if (action === 'add-score') { if (view.querySelectorAll('.score').length < 3) document.querySelector('#scores').insertAdjacentHTML('beforeend', scoreHtml()); return; }
-    if (action === 'remove-score') { if (view.querySelectorAll('.score').length > 1) button.closest('.score').remove(); return; }
-    if (action === 'add-term') { button.closest('.score').querySelector('.terms').insertAdjacentHTML('beforeend', termHtml()); return; }
-    if (action === 'remove-term') { if (button.closest('.terms').children.length > 1) button.closest('.term').remove(); return; }
+    if (action === 'new-settings') { newSettings = true; render(); return; }
+    if (action === 'duplicate-settings') { const filters = route() === 'filters', p = filters ? selectedFilter() : selectedTreemap(); await api(filters ? 'filters' : 'treemaps', 'POST', { ...p, name: `${p.name} copy` }); }
+    if (action === 'delete-settings') { const filters = route() === 'filters', p = filters ? selectedFilter() : selectedTreemap(); if (!confirm(`Delete "${p.name}"?`)) return; await api(`${filters ? 'filters' : 'treemaps'}/${p.id}`, 'DELETE'); await load(); render(); return; }
+    if (action === 'use-local-heat') { const heat = preferences.heat?.[preferenceKey()]; if (!heat) { notice('Adjust the treemap legend first.'); return; } for (const [key,value] of Object.entries(heat)) view.querySelector(`[name="heat-${key}"]`).value = value; return; }
+    if (action === 'add-function-field' || action === 'add-file-field') { const kind = action === 'add-function-field' ? 'function' : 'file'; document.querySelector('#formula-fields').insertAdjacentHTML('beforeend', formulaField({ id: crypto.randomUUID(), kind, name: '', autoName: true, code: kind === 'function' ? 'metrics.cyclomatic_complexity' : 'metrics.effective_lines', aggregation: 'sum(scores)' })); mountScoreEditors(view, api); return; }
+    if (action === 'remove-field') { button.closest('.formula-field').remove(); return; }
     if (action === 'duplicate-preset') { const p = selectedPreset(); await api('presets', 'POST', { ...p, name: `${p.name} copy` }); }
-    if (action.startsWith('delete-')) {
+    if (['delete-inspection','delete-preset'].includes(action)) {
       const inspection = action === 'delete-inspection', c = inspection ? selectedInspection() : selectedPreset();
       if (!confirm(`Delete "${c.name}"${inspection ? ' and its inspection results' : ''}?`)) return;
       await api(`${inspection ? 'inspections' : 'presets'}/${c.id}`, 'DELETE');
@@ -245,7 +269,7 @@ document.addEventListener('click', async event => {
     if (action === 'run' || action === 'cancel') updateProgress(); else render();
   } catch (e) { notice(e); }
 });
-window.addEventListener('hashchange', () => { notice(null); newInspection = newPreset = false; render(); });
+window.addEventListener('hashchange', () => { notice(null); newInspection = newPreset = newSettings = false; render(); });
 try { await load(); render(); } catch (e) { notice(e); }
 let polling = false;
 setInterval(async () => {
@@ -268,7 +292,7 @@ window.addEventListener('message', async event => {
   if (frame && event.source === frame.contentWindow && event.data?.type === 'code-view-heat') {
     const p = selectedPreset(), heat = event.data.heat;
     try {
-      if (!p || !heat || typeof heat !== 'object' || Array.isArray(heat) || Object.entries(heat).some(([key,value]) => !['min','yellowFrom','redFrom','max'].includes(key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error('Invalid heat thresholds.');
+      if (!p || !heat || typeof heat !== 'object' || Array.isArray(heat) || Object.entries(heat).some(([key,value]) => !['min','yellowFrom','redFrom','max'].includes(key) || typeof value !== 'number' || !Number.isFinite(value) )) throw new Error('Invalid heat thresholds.');
       preferences.heat = { ...preferences.heat, [preferenceKey()]: heat }; savePreferences(preferences);
       frame.contentWindow?.postMessage({ type: 'code-view-heat-result', local: true }, '*');
     } catch (error) {

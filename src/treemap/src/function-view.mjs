@@ -1,5 +1,4 @@
-import { functionMetrics } from './catalog.mjs';
-import { aggregate, scoreMeasurements } from './scoring.mjs';
+import { aggregate } from './scoring.mjs';
 
 // All source queries use fixed, catalog-owned SQL. File-only metrics never enter
 // function scoring. Events use their owning function, or their target for incoming references.
@@ -12,7 +11,7 @@ export function attachFunctions(db, files, selected, catalog, query) {
   const fileById = new Map(files.map(file => [file.id, file]));
   const functions = query(db, 'SELECT id,file_id,name,kind,line,column,end_line,exclusive_size_bytes FROM code_functions').filter(fn => fileById.has(fn.file_id));
   const measurements = new Map(functions.map(fn => [fn.id, new Map()]));
-  const needed = new Set([selected.functionArea, ...selected.scores.flatMap(score => score.metrics.map(term => term.metric)).filter(metric => functionMetrics.has(metric))]);
+  const needed = new Set([selected.functionArea]);
   for (const metric of needed) {
     const source = catalog.get(metric);
     const owner = source.functionOwner ?? (source.table === 'code_functions' ? 't.id' : source.table === 'code_calls' ? 't.caller_id' : 't.function_id');
@@ -29,10 +28,6 @@ export function attachFunctions(db, files, selected, catalog, query) {
     const file = fileById.get(fn.file_id), values = measurements.get(fn.id);
     const node = { ...fn, kind: 'function', functionKind: fn.kind, path: `${file.path}:${fn.line}:${fn.column}`, sizeMetric: catalog.get(selected.functionArea).label, metrics: {}, scores: [] };
     for (const metric of needed) node.metrics[metric] = aggregate(values.get(metric) ?? [], catalog.get(metric).aggregation);
-    selected.scores.forEach((score, groupIndex) => {
-      const result = scoreMeasurements(score, metric => values.get(metric) ?? [], metric => functionMetrics.has(metric) && (!catalog.get(metric).nullable || !!values.get(metric)?.length));
-      if (result.contributions.length) node.scores.push({ ...result, groupIndex });
-    });
     file.children.push(node);
     return node;
   });

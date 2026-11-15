@@ -25,11 +25,11 @@ Neither script requires a SQLite server. The Git inspector needs no pip packages
 ## Treemap
 
 Generate interactive HTML snippets from inspector SQLite results, with configurable
-area, weighted scores, path filters and a green-to-violet heat scale.
+area, JavaScript scores, path filters and a green-to-violet heat scale.
 See [usage](src/treemap/USAGE.md).
 
 ## Local server
 
 Run `npm start --prefix src/server` and open http://127.0.0.1:3210 to configure
-inspections and explore treemaps. Install the inspector and treemap dependencies
+inspections and explore treemaps. Install the inspector, score-code and treemap dependencies
 first. See [server setup and usage](src/server/README.md).

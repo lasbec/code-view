@@ -5,11 +5,12 @@ Start from the repository root:
 ```sh
 npm ci --prefix src/code-inspector/typescript
 npm ci --prefix src/treemap
+npm ci --prefix src/score-code
 npm start --prefix src/server
 ```
 
-Open http://127.0.0.1:3210. The server itself uses Node built-ins and needs no
-additional npm installation. Requires Node >=22.13, Python >=3.10, and Git >=2.38
+Open http://127.0.0.1:3210. The server uses the inspector, score-code and treemap packages. It needs no
+separate installation in the server directory. Requires Node >=22.13, Python >=3.10, and Git >=2.38
 on PATH. Use `git --version` to check the Git binary that the server will run.
 
 The four navigation entries provide:
@@ -31,19 +32,19 @@ The four navigation entries provide:
   Counts remain visible after success, failure, or cancellation until the next run
   or server restart. Progress refreshes every 1.5 seconds without replacing forms
   or closing the inspection output panel.
-- Treemap configuration: named global presets with area metrics, one to three
-  weighted score groups, heat thresholds, path filters and Git history dates.
-  Metric selectors use a curated catalog with readable names and no duplicate
-  aliases, source positions or diagnostic codes. Contributions apply thresholds
-  before configurable file aggregation (including interpolated quantiles).
-  Each group has an optional upper limit and a normalization checkbox (0–100).
-  Groups combine using sum, quantile, minimum, maximum or product.
-- Help: a searchable reference for all selectable catalog metrics,
-  with compact rows showing each short description once. Calculation rules and
-  examples expand side by side on desktop and stack on small screens. The
-  general introduction is collapsed by default. Explains
-  per-file aggregation, score weights and thresholds, source-analysis limits,
-  and Git history scope. Available before the first inspection.
+- Score configuration: independent, named JavaScript function and file contributions,
+  with a per-function-field file aggregation (`sum(scores)` by default). CodeMirror
+  supplies scope-specific completion and TypeScript diagnostics for metric/Lodash
+  typos. Contribution names default to the first metric and can be edited. Syntax
+  errors require confirmation before saving; invalid contributions and dependent
+  totals become null with an error hint.
+- Filters: reusable repository-relative path patterns and inclusive Git date bounds.
+  The selected score and filter define the same calculation in every view.
+- Treemap settings: separate named area metrics and heat scales. Presentation
+  changes reuse persisted scores. Legend edits remain temporary until explicitly
+  copied to the selected treemap settings and saved.
+- Help: separate function metrics, file code metrics and file Git metrics, with
+  JavaScript examples, input types, common Lodash tools and execution rules.
 
 Code filters use paths relative to the tsconfig directory. Treemap filters use
 paths relative to the repository root. Code inspection reads working-tree files,
@@ -90,12 +91,15 @@ include branch integrations and possible conflict resolutions; they do not prove
 that the merge author edited the file. Existing Git score metrics still include
 merges. No new inspection is needed for these lists or identity changes.
 
-Treemap preset format version 2 deliberately discards older treemap presets on
-first startup and creates a new default preset. Inspection configurations,
-repository settings, author identities and existing result databases are preserved.
-Run inspection again to refresh measurements affected by analyzer corrections;
-changing aggregation, normalization or group operations needs no reinspection.
-See [calculation rules and JSON configuration](../treemap/USAGE.md).
+Scores and named contributions are cached in `score_*` tables within each
+inspection's `analysis.sqlite`. The score module uses one reusable worker thread
+inside the server process. Formulas compile once per calculation; no subprocesses
+or per-function workers are created. Hanging fields become null after their time
+budget and other fields continue. Run only trusted user code; workers are not a
+security sandbox. Source measurements, author identities and inspection results
+remain independent. Presets were transferred manually without migration scripts.
+See [the score module](../score-code/README.md) and
+[treemap usage](../treemap/USAGE.md).
 
 The treemap toolbar's **Show functions** checkbox temporarily subdivides files
 into function tiles, with the file score shown on the surrounding border.
@@ -127,9 +131,9 @@ non-function symbol usages, exports and signatures from schema version 6.
 ## Files and Functions
 
 The Files and Functions navigation entries show all inspected items in compact,
-sortable tables, independently of treemap path filters or rectangle size.
+sortable tables, within the selected path filter, independently of rectangle size.
 The selected inspection and scoring preset are shared across views. Both lists
-score the same complete file/function population; search and filters preserve
+score the same selected file/function population; search and filters preserve
 those scores. Opening a row preserves that scoring context in its detail view.
 Back restores the list's searches, selected filters, sorting, page and scroll.
 
@@ -178,9 +182,9 @@ and background dragging to navigate. Calculations run in a worker with a timeout
 ## Developers
 
 The Developers tab attributes current file scores to Git authors, using the same
-all-file scoring population as Files and Functions. Search, table sorting and
-Treemap path filters do not change these scores. Git date bounds come from the
-selected scoring preset. Existing author identities combine email aliases.
+filtered scoring population as Files and Functions. Search and table sorting only
+change the display. Selected path and Git date filters apply to scores and their
+attribution. Existing author identities combine email aliases.
 
 The right sidebar provides independent named developer presets (New, Duplicate,
 Delete, Save & apply). Defaults are proportional attribution, weighted average,
@@ -225,7 +229,7 @@ The browser caches treemap, file/function lists, developer data, graph data and
 item details in memory (up to 32 requests). Successful inspection or preset
 changes invalidate cached data. The navbar's Reload button clears the data caches
 and fetches the current view again. Display options, disabled authors and per
-inspection/preset Heat thresholds are stored separately in localStorage and
+inspection/score/filter/treemap Heat thresholds are stored separately in localStorage and
 survive Reload and browser refresh. Heat Apply/Auto changes are local to this
-browser; they do not modify the saved server preset. If browser storage is
+browser; they do not modify the saved server treemap preset. If browser storage is
 unavailable, preferences still work for the current session.

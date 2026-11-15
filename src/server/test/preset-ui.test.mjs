@@ -2,51 +2,50 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { defaultPreset, validatePreset } from '../store.mjs';
+import { defaultPreset, defaultFilter, defaultTreemap, validatePreset } from '../store.mjs';
 const requireTreemap = createRequire(new URL('../../treemap/package.json', import.meta.url));
 const { JSDOM } = requireTreemap('jsdom');
 const { build } = requireTreemap('esbuild');
 
-test('preset editor saves group and file quantiles, limits and normalization and filters the metric catalog',async t=>{
+test('score editor saves named JavaScript fields with independent aggregation and no legacy controls', async t => {
   const bundle=await build({entryPoints:[new URL('../public/app.js',import.meta.url).pathname],bundle:true,format:'esm',write:false});
-  const dom=new JSDOM(await readFile(new URL('../public/index.html',import.meta.url),'utf8'),{url:'http://127.0.0.1:3210/#presets',runScripts:'outside-only'});
+  const dom=new JSDOM(await readFile(new URL('../public/index.html',import.meta.url),'utf8'),{url:'http://127.0.0.1:3210/#presets',runScripts:'outside-only',pretendToBeVisual:true});
   t.after(()=>dom.window.close());
-  const state={inspections:[],presets:[{id:'preset',...defaultPreset()}],selection:{preset:'preset'}};
+  dom.window.Range.prototype.getClientRects=()=>[];
+  dom.window.Range.prototype.getBoundingClientRect=()=>({left:0,right:0,top:0,bottom:0,width:0,height:0});
+  const state={inspections:[],presets:[{id:'preset',...defaultPreset()}],filters:[{id:'filter',...defaultFilter()}],treemaps:[{id:'treemap',...defaultTreemap()}],selection:{preset:'preset'}};
   let saved;
   dom.window.fetch=async(path,options)=>{
+    if(path==='/api/score/editor') return {ok:true,json:async()=>({diagnostics:[],name:'Cyclomatic complexity',metrics:[],tools:['sum','max']})};
     if(options?.method==='PUT') { saved=JSON.parse(options.body);state.presets[0]={id:'preset',...saved}; }
     return {ok:true,json:async()=>path==='/api/state'?structuredClone(state):{ok:true}};
   };
   await dom.window.eval(`(async()=>{${bundle.outputFiles[0].text}\n})()`);
-  const doc=dom.window.document,change=(element,value)=>{element.value=value;element.dispatchEvent(new dom.window.Event('change',{bubbles:true}));};
-  const query=name=>doc.querySelector(`[name="${name}"]`);
-  const metric=query('metric');
-  assert.ok([...metric.options].some(option=>option.textContent==='Cyclomatic complexity'));
-  assert.ok(![...metric.options].some(option=>/diagnostics\.code|\.line$|code\.function_count/.test(option.value)));
-  change(query('operation'),'quantile');query('group-quantile').value='0';
-  assert.equal(doc.querySelector('#group-quantile').hidden,false);
-  change(query('functionArea'),'code_parameters.count');
-  query('score-max').value='80';query('normalize').checked=false;
-  change(query('aggregation'),'quantile');
-  assert.equal(doc.querySelector('.quantile-field').hidden,false);
-  query('quantile').value='90';query('min').value='10';query('factor').value='2';
+  const doc=dom.window.document;
+  assert.match(doc.body.textContent,/Score configuration/);
+  assert.equal(doc.querySelector('[name="heat-max"]'),null);
+  assert.equal(doc.querySelector('[name="include"]'),null);
+  assert.equal(doc.querySelector('[name="normalize"]'),null);
+  assert.ok(doc.querySelector('.cm-editor'));
+  const field=doc.querySelector('.formula-field');
+  field.querySelector('[name="code"]').value='const x = metrics.cyclomatic_complexity; return x * 2;';
+  field.querySelector('[name="aggregation"]').value='max(scores) ?? 0';
+  const name=field.querySelector('[name="field-name"]'); name.value='Risk';name.dispatchEvent(new dom.window.Event('input',{bubbles:true}));
+  for(let i=0;i<4;i++) doc.querySelector('[data-action="add-file-field"]').click();
+  assert.equal(doc.querySelectorAll('.formula-field').length,5,'No legacy three-group limit');
   doc.querySelector('#preset-form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
-  for(let i=0;i<10&&!saved;i++) await new Promise(resolve=>setImmediate(resolve));
+  for(let i=0;i<20&&!saved;i++) await new Promise(resolve=>setImmediate(resolve));
   assert.ok(saved);validatePreset(saved);
-  assert.equal(saved.config.functionArea,'code_parameters.count');
-  assert.equal(saved.config.operation,'quantile');assert.equal(saved.config.quantile,0);
-  assert.deepEqual(saved.config.scores[0],{name:'Complexity',normalize:false,max:80,metrics:[{metric:'code_functions.cyclomatic_complexity',aggregation:'quantile',min:10,quantile:90,factor:2}]});
-  for(let i=0;i<3;i++) await new Promise(resolve=>setImmediate(resolve));
-  change(query('metric'),'code_calls.count');
-  assert.deepEqual([...query('aggregation').options].map(option=>option.value),['count']);
-  assert.equal(doc.querySelector('.quantile-field').hidden,true);
-  change(query('metric'),'code_functions.max_nesting');
-  assert.equal(query('aggregation').value,'max');
+  assert.equal(saved.config.fields[0].name,'Risk');
+  assert.equal(saved.config.fields[0].autoName,false);
+  assert.equal(saved.config.fields[0].aggregation,'max(scores) ?? 0');
+  assert.match(saved.config.fields[0].code,/const x/);
+  assert.deepEqual(Object.keys(saved.config),['fields']);
 });
 
 test('view preferences persist locally and data reload retains them',async t=>{
  const bundle=await build({entryPoints:[new URL('../public/app.js',import.meta.url).pathname],bundle:true,format:'esm',write:false});
- const state={inspections:[{id:'repo',name:'Repo',hasResults:true}],presets:[{id:'preset',...defaultPreset()}],selection:{inspection:'repo',preset:'preset'}};
+ const state={inspections:[{id:'repo',name:'Repo',hasResults:true}],presets:[{id:'preset',...defaultPreset()}],filters:[{id:'filter',...defaultFilter()}],treemaps:[{id:'treemap',...defaultTreemap()}],selection:{inspection:'repo',preset:'preset'}};
  const requests=[];
  async function page(preferences) {
   const dom=new JSDOM(await readFile(new URL('../public/index.html',import.meta.url),'utf8'),{url:'http://127.0.0.1:3210/#treemap',runScripts:'outside-only'});t.after(()=>dom.window.close());
@@ -89,7 +88,7 @@ test('view preferences persist locally and data reload retains them',async t=>{
 
 test('treemap heat messages save locally per preset, retain the iframe and reject invalid values',async t=>{
  const bundle=await build({entryPoints:[new URL('../public/app.js',import.meta.url).pathname],bundle:true,format:'esm',write:false});
- const state={inspections:[{id:'repo',name:'Repo',hasResults:true}],presets:[{id:'preset',...defaultPreset()}],selection:{inspection:'repo',preset:'preset'}};
+ const state={inspections:[{id:'repo',name:'Repo',hasResults:true}],presets:[{id:'preset',...defaultPreset()}],filters:[{id:'filter',...defaultFilter()}],treemaps:[{id:'treemap',...defaultTreemap()}],selection:{inspection:'repo',preset:'preset'}};
  const original=structuredClone(state.presets[0]);
  const dom=new JSDOM(await readFile(new URL('../public/index.html',import.meta.url),'utf8'),{url:'http://127.0.0.1:3210/#treemap',runScripts:'outside-only'});
  t.after(()=>dom.window.close());
@@ -117,10 +116,10 @@ test('treemap heat messages save locally per preset, retain the iframe and rejec
  send(frame.contentWindow);
  for(let i=0;i<3;i++)await new Promise(resolve=>setImmediate(resolve));
  assert.equal(saved,undefined);assert.deepEqual(state.presets[0],original);
- assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('code-view.settings.v1')).heat[JSON.stringify(['repo','preset'])],heat);
+ assert.deepEqual(JSON.parse(dom.window.localStorage.getItem('code-view.settings.v1')).heat[JSON.stringify(['repo','preset','filter','treemap'])],heat);
  assert.ok(replies.some(r=>r.type==='code-view-heat-result'&&!r.error));
  await poll();assert.equal(dom.window.document.querySelector('#map iframe'),frame);
- dom.window.dispatchEvent(new dom.window.MessageEvent('message',{source:frame.contentWindow,data:{type:'code-view-heat',heat:{max:-1}}}));
+ dom.window.dispatchEvent(new dom.window.MessageEvent('message',{source:frame.contentWindow,data:{type:'code-view-heat',heat:{max:'bad'}}}));
  for(let i=0;i<3;i++)await new Promise(resolve=>setImmediate(resolve));
  assert.ok(replies.some(r=>r.type==='code-view-heat-result'&&r.error==='Invalid heat thresholds.'));
  dom.window.document.querySelector('#reload-data').click();
@@ -130,7 +129,7 @@ test('treemap heat messages save locally per preset, retain the iframe and rejec
  freshFrame.dispatchEvent(new dom.window.Event('load'));
  assert.deepEqual(JSON.parse(JSON.stringify(restored.find(m=>m.type==='code-view-options').heat)),heat);
  assert.equal(saved,undefined);
- dom.window.location.hash='#presets';
+ dom.window.location.hash='#treemap-settings';
  await new Promise(resolve=>dom.window.setTimeout(resolve,0));
  assert.equal(dom.window.document.querySelector('[name="heat-yellowFrom"]').value,'');
 });

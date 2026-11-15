@@ -14,12 +14,12 @@ export function inspectionList(path, model) {
       SUM(CASE WHEN effect='possible' THEN mutations ELSE 0 END) AS possible
       FROM code_accesses GROUP BY function_id`).all().map(row => [row.function_id, row]));
     const traitsAvailable = db.prepare('PRAGMA table_info(code_functions)').all().some(c => c.name === 'visibility');
-    const functions = db.prepare('SELECT * FROM code_functions').all().map(fn => ({
+    const functions = db.prepare('SELECT * FROM code_functions').all().filter(fn => nodes.has(fn.id)).map(fn => ({
       id: fn.id, name: fn.name, file_id: fn.file_id, path: fn.file_id, line: fn.line,
       signature: fn.signature ?? '', kind: fn.kind, visibility: fn.visibility ?? null,
       is_static: fn.is_static ?? null, is_async: fn.is_async ?? null,
       is_generator: fn.is_generator ?? null, is_exported: fn.is_exported ?? null,
-      score: nodes.get(fn.id)?.heat ?? null, total_lines: fn.total_lines,
+      score: nodes.get(fn.id)?.heat ?? null, error: nodes.get(fn.id)?.error ?? null, total_lines: fn.total_lines,
       call_depth: fn.call_depth ?? null, reachable_internal_count: fn.reachable_internal_count ?? null,
       down_call_depth: fn.down_call_depth ?? null,
       reachable_external_count: fn.reachable_external_count ?? null, reachable_symbol_count: fn.reachable_symbol_count ?? null,
@@ -34,8 +34,8 @@ export function inspectionList(path, model) {
       summary.function_count++; summary.complexity += fn.complexity;
       summary.definite += fn.definite; summary.possible += fn.possible;
     }
-    const files = db.prepare('SELECT id,total_lines,effective_lines FROM code_files').all().map(file => ({
-      ...file, name: file.id.split('/').at(-1), path: nodes.get(file.id)?.path ?? file.id, score: nodes.get(file.id)?.heat ?? null,
+    const files = db.prepare('SELECT id,total_lines,effective_lines FROM code_files').all().filter(file => nodes.has(file.id)).map(file => ({
+      ...file, name: file.id.split('/').at(-1), path: nodes.get(file.id)?.path ?? file.id, score: nodes.get(file.id)?.heat ?? null, error: nodes.get(file.id)?.error ?? null,
       function_count: 0, complexity: 0, definite: 0, possible: 0, ...byFile.get(file.id),
     }));
     const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name));

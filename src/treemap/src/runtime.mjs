@@ -87,7 +87,7 @@ export function mountTreeMap(host, model) {
   controls.append(element('span', 'Heat'));
   for (const [key, name] of [['min','Min'],['yellowFrom','Yellow'],['redFrom','Red'],['max','Max']]) {
     const label = element('label', name), input = document.createElement('input');
-    input.type = 'number'; input.min = '0'; input.step = 'any'; input.name = key;
+    input.type = 'number'; input.step = 'any'; input.name = key;
     input.setAttribute('aria-label', `Heat ${name}`); input.title = 'Leave blank for automatic';
     input.value = model.heat?.[key] ?? ''; input.placeholder = String(Number(scale[key].toPrecision(5)));
     label.append(input); controls.append(label); fields.set(key, input);
@@ -102,10 +102,10 @@ export function mountTreeMap(host, model) {
     if (!controls.reportValidity()) return;
     const heat = {};
     for (const [key,input] of fields) if (input.value !== '') heat[key] = Number(input.value);
-    const min = heat.min ?? 0, max = heat.max ?? model.observedMax ?? model.legend.max;
+    const min = heat.min ?? model.observedMin ?? 0, max = heat.max ?? model.observedMax ?? model.legend.max;
     const next = { min, max, yellowFrom: heat.yellowFrom ?? min+(max-min)/3, redFrom: heat.redFrom ?? min+2*(max-min)/3 };
-    const zero = min === 0 && max === 0 && heat.max === undefined && heat.yellowFrom === undefined && heat.redFrom === undefined;
-    if (!Object.values(next).every(v => Number.isFinite(v) && v >= 0) || (!zero && !(min < next.yellowFrom && next.yellowFrom < next.redFrom && next.redFrom < max))) {
+    const zero = min === max && heat.min === undefined && heat.max === undefined && heat.yellowFrom === undefined && heat.redFrom === undefined;
+    if (!Object.values(next).every(v => Number.isFinite(v)) || (!zero && !(min < next.yellowFrom && next.yellowFrom < next.redFrom && next.redFrom < max))) {
       status.textContent = 'Use Min < Yellow < Red < Max.'; status.classList.add('error'); return;
     }
     Object.assign(scale, next); scaleChanged = true;
@@ -182,8 +182,7 @@ export function mountTreeMap(host, model) {
     if (node.children && node.kind !== 'file') return `${node.path || '/'}\nFläche: ${node.area}\nKlicken, um dieses Verzeichnis zu öffnen.`;
     const lines = [node.path, `Fläche (${model.areaMetric}): ${node.area}`, `Heat-Score: ${node.heat ?? 'No applicable function score'}`];
     for (const score of node.scores ?? []) {
-      lines.push(`${score.name}: ${score.raw} → ${score.capped} (Grenze ${score.max}${score.normalize ? ', normalisiert auf 0–100' : ''}) → ${score.value}`);
-      for (const term of score.contributions) lines.push(`  ${term.label}: ${term.aggregation}${term.aggregation === 'quantile' ? ` (${term.quantile}%)` : ''}, Schwellwert ${term.min}, ${term.matched} Treffer, Wert ${term.value}, Faktor ${term.factor} → ${term.contribution}`);
+      lines.push(`${score.name}: ${score.value ?? '–'}${score.error ? ` · ${score.error}` : ''}`);
     }
     return lines.join('\n');
   }
@@ -228,15 +227,11 @@ export function mountTreeMap(host, model) {
         grid.append(authors);
       }
       for (const score of node.scores ?? []) {
-        const section = element('section'); section.append(element('h3', `${score.name}: ${score.value}`), element('small', `Rohwert ${score.raw} · gedeckelt ${score.capped} · Grenze ${score.max}${score.normalize ? ' · normalisiert auf 0–100' : ''}`));
-        const table = element('table');
-        for (const term of score.contributions) {
-          const row = element('tr');
-          const metric = element('td', term.label); metric.title = `${term.aggregation}${term.aggregation === 'quantile' ? ` (${term.quantile}%)` : ''} · Schwellwert ${term.min} · ${term.matched} Treffer · Faktor ${term.factor}`;
-          metric.append(element('small', metric.title));
-          row.append(metric, element('td', `Raw ${term.rawValue} · excess ${term.value} → ${term.contribution}`)); table.append(row);
-        }
-        section.append(table); grid.append(section);
+        const section = element('section');
+        section.append(element('h3', `${score.name}: ${score.value ?? '–'}`), element('pre', score.code ?? ''));
+        if (score.aggregation) section.append(element('small', 'File aggregation'), element('pre', score.aggregation));
+        if (score.error) section.append(element('p', score.error));
+        grid.append(section);
       }
     } else summary.append(element('p', 'Klicken, um dieses Verzeichnis zu öffnen.'));
     detail.append(grid);
